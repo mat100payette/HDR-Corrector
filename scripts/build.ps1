@@ -10,7 +10,8 @@ $ErrorActionPreference = "Stop"
 $repoRoot = Split-Path -Parent $PSScriptRoot
 . (Join-Path $PSScriptRoot "common.ps1")
 
-$src = Join-Path $repoRoot "src\main.cpp"
+$sourceRoot = Join-Path $repoRoot "src"
+$sourceFiles = @(Get-ChildItem -LiteralPath $sourceRoot -Filter "*.cpp" | Sort-Object Name)
 $resource = Join-Path $repoRoot "src\version.rc"
 $manifest = Join-Path $repoRoot "src\app.manifest"
 $distRoot = Join-Path $repoRoot "dist"
@@ -19,7 +20,6 @@ $dist = if ($Configuration -eq "Release") { $distRoot } else { Join-Path $distRo
 $obj = Join-Path $buildRoot $Configuration
 $exe = Join-Path $dist "HDRCorrector.exe"
 $pdb = Join-Path $dist "HDRCorrector.pdb"
-$objFile = Join-Path $obj "main.obj"
 $resFile = Join-Path $obj "version.res"
 $versionHeader = Join-Path $obj "version_autogen.h"
 
@@ -34,6 +34,9 @@ New-Item -ItemType Directory -Force -Path $dist | Out-Null
 New-Item -ItemType Directory -Force -Path $obj | Out-Null
 
 $versionInfo = Resolve-HdrCorrectorVersion -Version $Version -RepoRoot $repoRoot
+if ($sourceFiles.Count -eq 0) {
+    throw "No C++ source files were found under $sourceRoot"
+}
 
 $versionHeaderContent = @"
 #define HDRCORRECTOR_VERSION_MAJOR $($versionInfo.Major)
@@ -76,12 +79,12 @@ $compilePrefix = @(
     "/W4",
     "/DUNICODE",
     "/D_UNICODE",
-    "/Fo`"$objFile`"",
+    "/Fo$obj\",
     "/Fe:`"$exe`""
 )
 
-$compileSuffix = @(
-    "`"$src`"",
+$sourceArguments = @($sourceFiles | ForEach-Object { "`"$($_.FullName)`"" })
+$compileSuffix = $sourceArguments + @(
     "`"$resFile`"",
     "/link",
     "/SUBSYSTEM:WINDOWS",

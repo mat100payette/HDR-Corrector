@@ -4,6 +4,17 @@ on:
   push:
     tags:
       - "v*.*.*"
+  workflow_dispatch:
+    inputs:
+      bump:
+        description: Version bump to release
+        required: true
+        default: patch
+        type: choice
+        options:
+          - patch
+          - minor
+          - major
 
 permissions:
   contents: write
@@ -11,21 +22,109 @@ permissions:
 jobs:
   release:
     name: Build and publish release
+    if: github.event_name != 'push' || github.actor != 'github-actions[bot]'
     runs-on: windows-latest
 
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Resolve version
         shell: pwsh
         run: |
-          $tag = "${{ github.ref_name }}"
-          if ($tag -notmatch '^v(\d+\.\d+\.\d+(?:\.\d+)?)$') {
-            throw "Release tags must look like v0.1.0 or v0.1.0.0. Got: $tag"
+          $eventName = "${{ github.event_name }}"
+
+          if ($eventName -eq "push") {
+            $tag = "${{ github.ref_name }}"
+            if ($tag -notmatch '^v(\d+\.\d+\.\d+(?:\.\d+)?)$') {
+              throw "Release tags must look like v0.1.0 or v0.1.0.0. Got: $tag"
+            }
+
+            "HDRCORRECTOR_VERSION=$($Matches[1])" | Out-File -FilePath $env:GITHUB_ENV -Append
+            "HDRCORRECTOR_TAG=$tag" | Out-File -FilePath $env:GITHUB_ENV -Append
+            return
           }
 
-          "HDRCORRECTOR_VERSION=$($Matches[1])" | Out-File -FilePath $env:GITHUB_ENV -Append
+          if ("${{ github.ref_type }}" -ne "branch") {
+            throw "Manual releases must be run from a branch, not from ${{ github.ref_type }} ${{ github.ref_name }}."
+          }
+
+          $bump = "${{ inputs.bump }}"
+          if ($bump -notin @("major", "minor", "patch")) {
+            throw "Unsupported version bump: $bump"
+          }
+
+          git fetch --force --tags
+
+          $versions = @(
+            git tag --list "v[0-9]*.[0-9]*.[0-9]*" | ForEach-Object {
+              if ($_ -match '^v(\d+)\.(\d+)\.(\d+)(?:\.\d+)?$') {
+                [pscustomobject]@{
+                  Tag = $_
+                  Version = [version]"$($Matches[1]).$($Matches[2]).$($Matches[3])"
+                  Major = [int]$Matches[1]
+                  Minor = [int]$Matches[2]
+                  Patch = [int]$Matches[3]
+                }
+              }
+            }
+          )
+
+          if ($versions.Count -gt 0) {
+            $base = $versions | Sort-Object Version -Descending | Select-Object -First 1
+            $major = $base.Major
+            $minor = $base.Minor
+            $patch = $base.Patch
+          } else {
+            $versionText = if (Test-Path -LiteralPath "VERSION") { (Get-Content -LiteralPath "VERSION" -Raw).Trim() } else { "0.0.0" }
+            if ($versionText -notmatch '^v?(\d+)\.(\d+)\.(\d+)(?:\.\d+)?$') {
+              throw "VERSION must look like 0.1.0 when no release tags exist. Got: $versionText"
+            }
+
+            $major = [int]$Matches[1]
+            $minor = [int]$Matches[2]
+            $patch = [int]$Matches[3]
+          }
+
+          switch ($bump) {
+            "major" {
+              $major += 1
+              $minor = 0
+              $patch = 0
+            }
+            "minor" {
+              $minor += 1
+              $patch = 0
+            }
+            "patch" {
+              $patch += 1
+            }
+          }
+
+          $version = "$major.$minor.$patch"
+          $tag = "v$version"
+          if (git tag --list $tag) {
+            throw "Tag already exists: $tag"
+          }
+
+          Set-Content -LiteralPath "VERSION" -Value $version
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add VERSION
+          $stagedFiles = @(git diff --cached --name-only)
+          if ($stagedFiles.Count -eq 0) {
+            Write-Host "VERSION is already $version; no version commit needed."
+          } else {
+            git commit -m "Release $tag"
+          }
+
+          git tag -a $tag -m "HDR Corrector $tag"
+
+          "HDRCORRECTOR_VERSION=$version" | Out-File -FilePath $env:GITHUB_ENV -Append
+          "HDRCORRECTOR_TAG=$tag" | Out-File -FilePath $env:GITHUB_ENV -Append
 
       - name: Package release
         shell: pwsh
@@ -47,12 +146,19 @@ jobs:
 
           & .\scripts\package.ps1 @packageArgs
 
+      - name: Push manual release commit and tag
+        if: github.event_name == 'workflow_dispatch'
+        shell: pwsh
+        run: |
+          git push origin "HEAD:refs/heads/${{ github.ref_name }}"
+          git push origin $env:HDRCORRECTOR_TAG
+
       - name: Publish GitHub release
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          $tag = "${{ github.ref_name }}"
+          $tag = $env:HDRCORRECTOR_TAG
           $assetBase = "HDRCorrector-$tag-win-x64"
           $files = @(
             "artifacts\$assetBase.zip",

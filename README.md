@@ -135,32 +135,27 @@ artifacts\SHA256SUMS.txt
 
 ## Maintainer Release
 
-Releases are tag-driven. Commit your changes first, then run:
+The easiest release path is the manual GitHub Actions workflow:
+
+1. Open **Actions > Release > Run workflow**.
+2. Choose the branch to release from.
+3. Choose `patch`, `minor`, or `major`.
+4. Run the workflow.
+
+The workflow finds the latest `vX.Y.Z` tag, computes the next version, updates `VERSION`, commits that version bump, creates the new tag, builds on a clean Windows runner, packages the executable, writes SHA256 hashes, and publishes the GitHub Release.
+
+Version bump examples:
+
+| Latest tag | Bump | New tag |
+| --- | --- | --- |
+| `v0.1.0` | `patch` | `v0.1.1` |
+| `v0.1.0` | `minor` | `v0.2.0` |
+| `v0.1.0` | `major` | `v1.0.0` |
+
+Tag pushes are still supported. To release an exact version manually from your machine, commit your changes first, then run:
 
 ```powershell
 .\scripts\release.ps1 0.1.0 -Push
-```
-
-The release script:
-
-- verifies the git worktree is clean;
-- builds and packages the release locally;
-- creates the annotated tag `v0.1.0`;
-- pushes the branch and tag when `-Push` is provided.
-
-Pushing the tag starts the GitHub Actions release workflow. The workflow builds on a clean Windows runner, packages the executable, writes SHA256 hashes, and publishes the GitHub Release.
-
-To create a local tag without pushing it:
-
-```powershell
-.\scripts\release.ps1 0.1.0
-```
-
-Then push it manually:
-
-```powershell
-git push origin main
-git push origin v0.1.0
 ```
 
 ## Code signing
