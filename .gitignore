@@ -1,0 +1,8 @@
+build/
+dist/
+artifacts/
+*.obj
+*.pdb
+*.ilk
+*.res
+*.log

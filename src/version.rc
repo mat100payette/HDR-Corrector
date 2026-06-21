@@ -1,0 +1,35 @@
+#include <windows.h>
+#include "version_autogen.h"
+
+1 VERSIONINFO
+ FILEVERSION HDRCORRECTOR_VERSION_MAJOR,HDRCORRECTOR_VERSION_MINOR,HDRCORRECTOR_VERSION_PATCH,HDRCORRECTOR_VERSION_BUILD
+ PRODUCTVERSION HDRCORRECTOR_VERSION_MAJOR,HDRCORRECTOR_VERSION_MINOR,HDRCORRECTOR_VERSION_PATCH,HDRCORRECTOR_VERSION_BUILD
+ FILEFLAGSMASK VS_FFI_FILEFLAGSMASK
+#ifdef DEBUG
+ FILEFLAGS VS_FF_DEBUG
+#else
+ FILEFLAGS 0x0L
+#endif
+ FILEOS VOS_NT_WINDOWS32
+ FILETYPE VFT_APP
+ FILESUBTYPE VFT2_UNKNOWN
+BEGIN
+    BLOCK "StringFileInfo"
+    BEGIN
+        BLOCK "040904B0"
+        BEGIN
+            VALUE "CompanyName", "HDR Corrector contributors\0"
+            VALUE "FileDescription", "HDR Corrector\0"
+            VALUE "FileVersion", HDRCORRECTOR_FILE_VERSION_TEXT "\0"
+            VALUE "InternalName", "HDRCorrector\0"
+            VALUE "LegalCopyright", "Copyright (C) 2026 HDR Corrector contributors\0"
+            VALUE "OriginalFilename", "HDRCorrector.exe\0"
+            VALUE "ProductName", "HDR Corrector\0"
+            VALUE "ProductVersion", HDRCORRECTOR_VERSION_TEXT "\0"
+        END
+    END
+    BLOCK "VarFileInfo"
+    BEGIN
+        VALUE "Translation", 0x0409, 1200
+    END
+END

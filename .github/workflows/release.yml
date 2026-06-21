@@ -1,0 +1,79 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Build and publish release
+    runs-on: windows-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Resolve version
+        shell: pwsh
+        run: |
+          $tag = "${{ github.ref_name }}"
+          if ($tag -notmatch '^v(\d+\.\d+\.\d+(?:\.\d+)?)$') {
+            throw "Release tags must look like v0.1.0 or v0.1.0.0. Got: $tag"
+          }
+
+          "HDRCORRECTOR_VERSION=$($Matches[1])" | Out-File -FilePath $env:GITHUB_ENV -Append
+
+      - name: Package release
+        shell: pwsh
+        env:
+          WINDOWS_SIGNING_CERT_PFX_BASE64: ${{ secrets.WINDOWS_SIGNING_CERT_PFX_BASE64 }}
+          WINDOWS_SIGNING_CERT_PASSWORD: ${{ secrets.WINDOWS_SIGNING_CERT_PASSWORD }}
+        run: |
+          $packageArgs = @("-Version", $env:HDRCORRECTOR_VERSION, "-Clean")
+
+          if (![string]::IsNullOrWhiteSpace($env:WINDOWS_SIGNING_CERT_PFX_BASE64)) {
+            $certPath = Join-Path $env:RUNNER_TEMP "windows-signing-cert.pfx"
+            [System.IO.File]::WriteAllBytes($certPath, [Convert]::FromBase64String($env:WINDOWS_SIGNING_CERT_PFX_BASE64))
+            $packageArgs += @("-SignPfxPath", $certPath)
+
+            if (![string]::IsNullOrWhiteSpace($env:WINDOWS_SIGNING_CERT_PASSWORD)) {
+              $packageArgs += @("-SignPfxPassword", $env:WINDOWS_SIGNING_CERT_PASSWORD)
+            }
+          }
+
+          & .\scripts\package.ps1 @packageArgs
+
+      - name: Publish GitHub release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $tag = "${{ github.ref_name }}"
+          $assetBase = "HDRCorrector-$tag-win-x64"
+          $files = @(
+            "artifacts\$assetBase.zip",
+            "artifacts\SHA256SUMS.txt"
+          )
+
+          $symbols = "artifacts\$assetBase-symbols.zip"
+          if (Test-Path -LiteralPath $symbols) {
+            $files += $symbols
+          }
+
+          $notes = @"
+          Download ``$assetBase.zip``, extract it, and run ``HDRCorrector.exe``.
+
+          SHA256 hashes are included in ``SHA256SUMS.txt``.
+          "@
+
+          $ghArgs = @("release", "create", $tag) + $files + @(
+            "--title", "HDR Corrector $tag",
+            "--notes", $notes,
+            "--verify-tag"
+          )
+
+          & gh @ghArgs

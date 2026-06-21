@@ -1,0 +1,18 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Debug HDR Corrector",
+      "type": "cppvsdbg",
+      "request": "launch",
+      "program": "${workspaceFolder}\\dist\\Debug\\HDRCorrector.exe",
+      "args": [],
+      "stopAtEntry": false,
+      "cwd": "${workspaceFolder}",
+      "environment": [],
+      "console": "internalConsole",
+      "preLaunchTask": "Build Debug"
+    }
+  ]
+}
+
