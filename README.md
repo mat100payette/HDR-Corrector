@@ -3,7 +3,7 @@
 [![CI](https://img.shields.io/github/actions/workflow/status/mat100payette/HDR-Corrector/ci.yml?branch=main&label=CI&style=flat-square)](https://github.com/mat100payette/HDR-Corrector/actions/workflows/ci.yml)
 [![Release](https://img.shields.io/github/actions/workflow/status/mat100payette/HDR-Corrector/release.yml?label=release&style=flat-square)](https://github.com/mat100payette/HDR-Corrector/actions/workflows/release.yml)
 [![Latest release](https://img.shields.io/github/v/release/mat100payette/HDR-Corrector?include_prereleases&sort=semver&style=flat-square)](https://github.com/mat100payette/HDR-Corrector/releases/latest)
-[![Downloads](https://img.shields.io/github/downloads/mat100payette/HDR-Corrector/total?style=flat-square)](https://github.com/mat100payette/HDR-Corrector/releases)
+[![Download](https://img.shields.io/badge/download-latest-2ea44f?style=flat-square)](https://github.com/mat100payette/HDR-Corrector/releases/latest)
 [![Windows 11](https://img.shields.io/badge/platform-Windows%2011-0078D4?logo=windows11&logoColor=white&style=flat-square)](https://github.com/mat100payette/HDR-Corrector/releases/latest)
 [![C++20](https://img.shields.io/badge/C%2B%2B-20-00599C?logo=cplusplus&logoColor=white&style=flat-square)](https://github.com/mat100payette/HDR-Corrector)
 
