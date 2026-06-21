@@ -1,5 +1,12 @@
 # HDR Corrector
 
+[![CI](https://img.shields.io/github/actions/workflow/status/mat100payette/HDR-Corrector/ci.yml?branch=main&label=CI&style=flat-square)](https://github.com/mat100payette/HDR-Corrector/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/actions/workflow/status/mat100payette/HDR-Corrector/release.yml?label=release&style=flat-square)](https://github.com/mat100payette/HDR-Corrector/actions/workflows/release.yml)
+[![Latest release](https://img.shields.io/github/v/release/mat100payette/HDR-Corrector?include_prereleases&sort=semver&style=flat-square)](https://github.com/mat100payette/HDR-Corrector/releases/latest)
+[![Downloads](https://img.shields.io/github/downloads/mat100payette/HDR-Corrector/total?style=flat-square)](https://github.com/mat100payette/HDR-Corrector/releases)
+[![Windows 11](https://img.shields.io/badge/platform-Windows%2011-0078D4?logo=windows11&logoColor=white&style=flat-square)](https://github.com/mat100payette/HDR-Corrector/releases/latest)
+[![C++20](https://img.shields.io/badge/C%2B%2B-20-00599C?logo=cplusplus&logoColor=white&style=flat-square)](https://github.com/mat100payette/HDR-Corrector)
+
 HDR Corrector is a small native Windows tray utility for the common Windows 11 HDR capture problem: SDR capture tools, screenshot viewers, and Discord screen share often treat HDR desktop pixels incorrectly, producing overly bright or washed-out output.
 
 HDR Corrector does **not** disable HDR on the monitor. It keeps the source display in HDR and captures the desktop through Windows Graphics Capture as `R16G16B16A16_FLOAT` scRGB frames.
