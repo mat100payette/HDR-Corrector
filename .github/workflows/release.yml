@@ -149,15 +149,18 @@ jobs:
             throw "Resolved version output is not numeric SemVer: '$version'"
           }
 
-          $packageArgs = @("-Version", $version, "-Clean")
+          $packageArgs = @{
+            Version = $version
+            Clean = $true
+          }
 
           if (![string]::IsNullOrWhiteSpace($env:WINDOWS_SIGNING_CERT_PFX_BASE64)) {
             $certPath = Join-Path $env:RUNNER_TEMP "windows-signing-cert.pfx"
             [System.IO.File]::WriteAllBytes($certPath, [Convert]::FromBase64String($env:WINDOWS_SIGNING_CERT_PFX_BASE64))
-            $packageArgs += @("-SignPfxPath", $certPath)
+            $packageArgs["SignPfxPath"] = $certPath
 
             if (![string]::IsNullOrWhiteSpace($env:WINDOWS_SIGNING_CERT_PASSWORD)) {
-              $packageArgs += @("-SignPfxPassword", $env:WINDOWS_SIGNING_CERT_PASSWORD)
+              $packageArgs["SignPfxPassword"] = $env:WINDOWS_SIGNING_CERT_PASSWORD
             }
           }
 

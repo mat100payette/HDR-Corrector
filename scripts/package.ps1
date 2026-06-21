@@ -42,15 +42,18 @@ if (!(Test-Path -LiteralPath $exe)) {
 }
 
 if (![string]::IsNullOrWhiteSpace($SignCertificateThumbprint) -or ![string]::IsNullOrWhiteSpace($SignPfxPath)) {
-    $signArgs = @("-Path", $exe, "-TimestampServer", $TimestampServer)
+    $signArgs = @{
+        Path = $exe
+        TimestampServer = $TimestampServer
+    }
     if (![string]::IsNullOrWhiteSpace($SignCertificateThumbprint)) {
-        $signArgs += @("-CertificateThumbprint", $SignCertificateThumbprint)
+        $signArgs["CertificateThumbprint"] = $SignCertificateThumbprint
     }
     if (![string]::IsNullOrWhiteSpace($SignPfxPath)) {
-        $signArgs += @("-PfxPath", $SignPfxPath)
+        $signArgs["PfxPath"] = $SignPfxPath
     }
     if (![string]::IsNullOrWhiteSpace($SignPfxPassword)) {
-        $signArgs += @("-PfxPassword", $SignPfxPassword)
+        $signArgs["PfxPassword"] = $SignPfxPassword
     }
 
     & (Join-Path $PSScriptRoot "sign.ps1") @signArgs
