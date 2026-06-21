@@ -32,6 +32,7 @@ jobs:
           fetch-depth: 0
 
       - name: Resolve version
+        id: version
         shell: pwsh
         run: |
           $eventName = "${{ github.event_name }}"
@@ -42,8 +43,10 @@ jobs:
               throw "Release tags must look like v0.1.0 or v0.1.0.0. Got: $tag"
             }
 
-            "HDRCORRECTOR_VERSION=$($Matches[1])" | Out-File -FilePath $env:GITHUB_ENV -Append
-            "HDRCORRECTOR_TAG=$tag" | Out-File -FilePath $env:GITHUB_ENV -Append
+            $version = $Matches[1]
+            "version=$version" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+            "tag=$tag" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+            Write-Host "Resolved release $tag from pushed tag."
             return
           }
 
@@ -72,41 +75,49 @@ jobs:
             }
           )
 
-          if ($versions.Count -gt 0) {
+          if ($versions.Count -eq 0) {
+            $version = if (Test-Path -LiteralPath "VERSION") { (Get-Content -LiteralPath "VERSION" -Raw).Trim() } else { "0.1.0" }
+            $version = $version.Trim().Trim('"').Trim("'").Trim()
+            if ($version.StartsWith("v", [System.StringComparison]::OrdinalIgnoreCase)) {
+              $version = $version.Substring(1)
+            }
+
+            if ($version -notmatch '^\d+\.\d+\.\d+(?:\.\d+)?$') {
+              throw "VERSION must look like 0.1.0 when no release tags exist. Got: $version"
+            }
+
+            $tag = "v$version"
+            if (git tag --list $tag) {
+              throw "Tag already exists: $tag"
+            }
+
+            Write-Host "No existing release tags found. Using $tag from VERSION."
+          } else {
             $base = $versions | Sort-Object Version -Descending | Select-Object -First 1
             $major = $base.Major
             $minor = $base.Minor
             $patch = $base.Patch
-          } else {
-            $versionText = if (Test-Path -LiteralPath "VERSION") { (Get-Content -LiteralPath "VERSION" -Raw).Trim() } else { "0.0.0" }
-            if ($versionText -notmatch '^v?(\d+)\.(\d+)\.(\d+)(?:\.\d+)?$') {
-              throw "VERSION must look like 0.1.0 when no release tags exist. Got: $versionText"
+
+            switch ($bump) {
+              "major" {
+                $major += 1
+                $minor = 0
+                $patch = 0
+              }
+              "minor" {
+                $minor += 1
+                $patch = 0
+              }
+              "patch" {
+                $patch += 1
+              }
             }
 
-            $major = [int]$Matches[1]
-            $minor = [int]$Matches[2]
-            $patch = [int]$Matches[3]
-          }
-
-          switch ($bump) {
-            "major" {
-              $major += 1
-              $minor = 0
-              $patch = 0
+            $version = "$major.$minor.$patch"
+            $tag = "v$version"
+            if (git tag --list $tag) {
+              throw "Tag already exists: $tag"
             }
-            "minor" {
-              $minor += 1
-              $patch = 0
-            }
-            "patch" {
-              $patch += 1
-            }
-          }
-
-          $version = "$major.$minor.$patch"
-          $tag = "v$version"
-          if (git tag --list $tag) {
-            throw "Tag already exists: $tag"
           }
 
           Set-Content -LiteralPath "VERSION" -Value $version
@@ -123,8 +134,9 @@ jobs:
 
           git tag -a $tag -m "HDR Corrector $tag"
 
-          "HDRCORRECTOR_VERSION=$version" | Out-File -FilePath $env:GITHUB_ENV -Append
-          "HDRCORRECTOR_TAG=$tag" | Out-File -FilePath $env:GITHUB_ENV -Append
+          "version=$version" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          "tag=$tag" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          Write-Host "Resolved manual release $tag."
 
       - name: Package release
         shell: pwsh
@@ -132,7 +144,12 @@ jobs:
           WINDOWS_SIGNING_CERT_PFX_BASE64: ${{ secrets.WINDOWS_SIGNING_CERT_PFX_BASE64 }}
           WINDOWS_SIGNING_CERT_PASSWORD: ${{ secrets.WINDOWS_SIGNING_CERT_PASSWORD }}
         run: |
-          $packageArgs = @("-Version", $env:HDRCORRECTOR_VERSION, "-Clean")
+          $version = "${{ steps.version.outputs.version }}".Trim()
+          if ($version -notmatch '^\d+\.\d+\.\d+(?:\.\d+)?$') {
+            throw "Resolved version output is not numeric SemVer: '$version'"
+          }
+
+          $packageArgs = @("-Version", $version, "-Clean")
 
           if (![string]::IsNullOrWhiteSpace($env:WINDOWS_SIGNING_CERT_PFX_BASE64)) {
             $certPath = Join-Path $env:RUNNER_TEMP "windows-signing-cert.pfx"
@@ -151,14 +168,14 @@ jobs:
         shell: pwsh
         run: |
           git push origin "HEAD:refs/heads/${{ github.ref_name }}"
-          git push origin $env:HDRCORRECTOR_TAG
+          git push origin "${{ steps.version.outputs.tag }}"
 
       - name: Publish GitHub release
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          $tag = $env:HDRCORRECTOR_TAG
+          $tag = "${{ steps.version.outputs.tag }}"
           $assetBase = "HDRCorrector-$tag-win-x64"
           $files = @(
             "artifacts\$assetBase.zip",

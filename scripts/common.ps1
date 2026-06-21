@@ -16,13 +16,13 @@ function Resolve-HdrCorrectorVersion {
         $Version = (Get-Content -LiteralPath $versionPath -Raw).Trim()
     }
 
-    $normalized = $Version.Trim()
+    $normalized = $Version.Trim().Trim('"').Trim("'").Trim()
     if ($normalized.StartsWith("v", [System.StringComparison]::OrdinalIgnoreCase)) {
         $normalized = $normalized.Substring(1)
     }
 
     if ($normalized -notmatch '^(\d+)\.(\d+)\.(\d+)(?:\.(\d+))?$') {
-        throw "Version must be numeric SemVer, for example 0.1.0 or 0.1.0.0."
+        throw "Version must be numeric SemVer, for example 0.1.0 or 0.1.0.0. Got: '$Version'."
     }
 
     $major = [int]$Matches[1]

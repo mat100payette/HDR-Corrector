@@ -142,7 +142,7 @@ The easiest release path is the manual GitHub Actions workflow:
 3. Choose `patch`, `minor`, or `major`.
 4. Run the workflow.
 
-The workflow finds the latest `vX.Y.Z` tag, computes the next version, updates `VERSION`, commits that version bump, creates the new tag, builds on a clean Windows runner, packages the executable, writes SHA256 hashes, and publishes the GitHub Release.
+The workflow finds the latest `vX.Y.Z` tag, computes the next version from the selected bump, updates `VERSION`, commits that version bump, creates the new tag, builds on a clean Windows runner, packages the executable, writes SHA256 hashes, and publishes the GitHub Release.
 
 Version bump examples:
 
