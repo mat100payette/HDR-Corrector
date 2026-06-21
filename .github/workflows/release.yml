@@ -1,9 +1,6 @@
 name: Release
 
 on:
-  push:
-    tags:
-      - "v*.*.*"
   workflow_dispatch:
     inputs:
       bump:
@@ -22,7 +19,6 @@ permissions:
 jobs:
   release:
     name: Build and publish release
-    if: github.event_name != 'push' || github.actor != 'github-actions[bot]'
     runs-on: windows-latest
 
     steps:
@@ -35,21 +31,6 @@ jobs:
         id: version
         shell: pwsh
         run: |
-          $eventName = "${{ github.event_name }}"
-
-          if ($eventName -eq "push") {
-            $tag = "${{ github.ref_name }}"
-            if ($tag -notmatch '^v(\d+\.\d+\.\d+(?:\.\d+)?)$') {
-              throw "Release tags must look like v0.1.0 or v0.1.0.0. Got: $tag"
-            }
-
-            $version = $Matches[1]
-            "version=$version" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
-            "tag=$tag" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
-            Write-Host "Resolved release $tag from pushed tag."
-            return
-          }
-
           if ("${{ github.ref_type }}" -ne "branch") {
             throw "Manual releases must be run from a branch, not from ${{ github.ref_type }} ${{ github.ref_name }}."
           }
@@ -166,8 +147,7 @@ jobs:
 
           & .\scripts\package.ps1 @packageArgs
 
-      - name: Push manual release commit and tag
-        if: github.event_name == 'workflow_dispatch'
+      - name: Push release commit and tag
         shell: pwsh
         run: |
           git push origin "HEAD:refs/heads/${{ github.ref_name }}"

@@ -152,12 +152,6 @@ Version bump examples:
 | `v0.1.0` | `minor` | `v0.2.0` |
 | `v0.1.0` | `major` | `v1.0.0` |
 
-Tag pushes are still supported. To release an exact version manually from your machine, commit your changes first, then run:
-
-```powershell
-.\scripts\release.ps1 0.1.0 -Push
-```
-
 ## Code signing
 
 Unsigned Windows executables can show SmartScreen warnings. The release workflow works without a signing certificate, but it will automatically sign the exe before packaging if these repository secrets are configured:
