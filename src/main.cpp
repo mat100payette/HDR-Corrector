@@ -582,7 +582,222 @@ bool SaveWicBitmapFromMemory(
     return true;
 }
 
-bool CopyBgraToClipboard(HWND hwnd, UINT width, UINT height, const std::vector<uint8_t>& bgra, std::wstring& error) {
+HGLOBAL DuplicateGlobalMemory(HGLOBAL source) {
+    const SIZE_T size = GlobalSize(source);
+    if (size == 0) {
+        return nullptr;
+    }
+
+    HGLOBAL copy = GlobalAlloc(GMEM_MOVEABLE, size);
+    if (!copy) {
+        return nullptr;
+    }
+
+    const void* sourceData = GlobalLock(source);
+    void* copyData = GlobalLock(copy);
+    if (!sourceData || !copyData) {
+        if (sourceData) {
+            GlobalUnlock(source);
+        }
+        if (copyData) {
+            GlobalUnlock(copy);
+        }
+        GlobalFree(copy);
+        return nullptr;
+    }
+
+    memcpy(copyData, sourceData, size);
+    GlobalUnlock(source);
+    GlobalUnlock(copy);
+    return copy;
+}
+
+HGLOBAL EncodePngToGlobalMemory(UINT width, UINT height, UINT stride, const std::vector<uint8_t>& pixels, std::wstring& error) {
+    winrt::com_ptr<IWICImagingFactory> factory;
+    HRESULT hr = CoCreateInstance(
+        CLSID_WICImagingFactory2,
+        nullptr,
+        CLSCTX_INPROC_SERVER,
+        IID_PPV_ARGS(factory.put()));
+    if (FAILED(hr)) {
+        hr = CoCreateInstance(
+            CLSID_WICImagingFactory,
+            nullptr,
+            CLSCTX_INPROC_SERVER,
+            IID_PPV_ARGS(factory.put()));
+    }
+    if (FAILED(hr)) {
+        error = L"Could not create WIC imaging factory: " + HResultMessage(hr);
+        return nullptr;
+    }
+
+    winrt::com_ptr<IWICBitmap> source;
+    hr = factory->CreateBitmapFromMemory(
+        width,
+        height,
+        GUID_WICPixelFormat32bppBGRA,
+        stride,
+        static_cast<UINT>(pixels.size()),
+        const_cast<BYTE*>(pixels.data()),
+        source.put());
+    if (FAILED(hr)) {
+        error = L"CreateBitmapFromMemory for PNG clipboard data failed: " + HResultMessage(hr);
+        return nullptr;
+    }
+
+    winrt::com_ptr<IStream> stream;
+    hr = CreateStreamOnHGlobal(nullptr, TRUE, stream.put());
+    if (FAILED(hr)) {
+        error = L"CreateStreamOnHGlobal failed: " + HResultMessage(hr);
+        return nullptr;
+    }
+
+    winrt::com_ptr<IWICBitmapEncoder> encoder;
+    hr = factory->CreateEncoder(GUID_ContainerFormatPng, nullptr, encoder.put());
+    if (FAILED(hr)) {
+        error = L"Create PNG encoder failed: " + HResultMessage(hr);
+        return nullptr;
+    }
+
+    hr = encoder->Initialize(stream.get(), WICBitmapEncoderNoCache);
+    if (FAILED(hr)) {
+        error = L"PNG encoder initialization failed: " + HResultMessage(hr);
+        return nullptr;
+    }
+
+    winrt::com_ptr<IWICBitmapFrameEncode> frame;
+    winrt::com_ptr<IPropertyBag2> propertyBag;
+    hr = encoder->CreateNewFrame(frame.put(), propertyBag.put());
+    if (FAILED(hr)) {
+        error = L"Create PNG frame failed: " + HResultMessage(hr);
+        return nullptr;
+    }
+
+    hr = frame->Initialize(propertyBag.get());
+    if (FAILED(hr)) {
+        error = L"PNG frame initialization failed: " + HResultMessage(hr);
+        return nullptr;
+    }
+
+    hr = frame->SetSize(width, height);
+    if (FAILED(hr)) {
+        error = L"PNG SetSize failed: " + HResultMessage(hr);
+        return nullptr;
+    }
+
+    WICPixelFormatGUID acceptedFormat = GUID_WICPixelFormat32bppBGRA;
+    hr = frame->SetPixelFormat(&acceptedFormat);
+    if (FAILED(hr)) {
+        error = L"PNG SetPixelFormat failed: " + HResultMessage(hr);
+        return nullptr;
+    }
+
+    if (IsEqualGUID(acceptedFormat, GUID_WICPixelFormat32bppBGRA)) {
+        hr = frame->WriteSource(source.get(), nullptr);
+    } else {
+        winrt::com_ptr<IWICFormatConverter> converter;
+        hr = factory->CreateFormatConverter(converter.put());
+        if (SUCCEEDED(hr)) {
+            hr = converter->Initialize(
+                source.get(),
+                acceptedFormat,
+                WICBitmapDitherTypeNone,
+                nullptr,
+                0.0,
+                WICBitmapPaletteTypeCustom);
+        }
+        if (SUCCEEDED(hr)) {
+            hr = frame->WriteSource(converter.get(), nullptr);
+        }
+    }
+
+    if (FAILED(hr)) {
+        error = L"PNG WriteSource failed: " + HResultMessage(hr);
+        return nullptr;
+    }
+
+    hr = frame->Commit();
+    if (FAILED(hr)) {
+        error = L"PNG frame commit failed: " + HResultMessage(hr);
+        return nullptr;
+    }
+
+    hr = encoder->Commit();
+    if (FAILED(hr)) {
+        error = L"PNG commit failed: " + HResultMessage(hr);
+        return nullptr;
+    }
+
+    HGLOBAL memory = nullptr;
+    hr = GetHGlobalFromStream(stream.get(), &memory);
+    if (FAILED(hr) || !memory) {
+        error = L"GetHGlobalFromStream failed: " + HResultMessage(hr);
+        return nullptr;
+    }
+
+    HGLOBAL clipboardMemory = DuplicateGlobalMemory(memory);
+    if (!clipboardMemory) {
+        error = L"Could not copy encoded PNG clipboard data.";
+        return nullptr;
+    }
+
+    return clipboardMemory;
+}
+
+HGLOBAL CreateFileDropData(const std::filesystem::path& path) {
+    if (path.empty()) {
+        return nullptr;
+    }
+
+    const std::wstring absolutePath = std::filesystem::absolute(path).wstring();
+    const size_t pathCharacters = absolutePath.size() + 2;
+    const size_t totalBytes = sizeof(DROPFILES) + pathCharacters * sizeof(wchar_t);
+
+    HGLOBAL memory = GlobalAlloc(GMEM_MOVEABLE | GMEM_ZEROINIT, totalBytes);
+    if (!memory) {
+        return nullptr;
+    }
+
+    auto* data = static_cast<uint8_t*>(GlobalLock(memory));
+    if (!data) {
+        GlobalFree(memory);
+        return nullptr;
+    }
+
+    auto* dropFiles = reinterpret_cast<DROPFILES*>(data);
+    dropFiles->pFiles = sizeof(DROPFILES);
+    dropFiles->fWide = TRUE;
+
+    auto* fileList = reinterpret_cast<wchar_t*>(data + sizeof(DROPFILES));
+    memcpy(fileList, absolutePath.c_str(), (absolutePath.size() + 1) * sizeof(wchar_t));
+    GlobalUnlock(memory);
+    return memory;
+}
+
+HGLOBAL CreatePreferredDropEffectData() {
+    HGLOBAL memory = GlobalAlloc(GMEM_MOVEABLE, sizeof(DWORD));
+    if (!memory) {
+        return nullptr;
+    }
+
+    auto* effect = static_cast<DWORD*>(GlobalLock(memory));
+    if (!effect) {
+        GlobalFree(memory);
+        return nullptr;
+    }
+
+    *effect = DROPEFFECT_COPY;
+    GlobalUnlock(memory);
+    return memory;
+}
+
+bool CopyBgraToClipboard(
+    HWND hwnd,
+    UINT width,
+    UINT height,
+    const std::vector<uint8_t>& bgra,
+    const std::filesystem::path& imageFilePath,
+    std::wstring& error) {
     const size_t pixelBytes = static_cast<size_t>(width) * height * 4;
     if (width == 0 || height == 0 || bgra.size() < pixelBytes) {
         error = L"Invalid clipboard bitmap dimensions.";
@@ -651,6 +866,23 @@ bool CopyBgraToClipboard(HWND hwnd, UINT width, UINT height, const std::vector<u
 
     HGLOBAL dib = makeDib();
     HGLOBAL dibV5 = makeDibV5();
+    HGLOBAL png = EncodePngToGlobalMemory(width, height, width * 4, bgra, error);
+    HGLOBAL imagePng = png ? DuplicateGlobalMemory(png) : nullptr;
+    if (png && !imagePng) {
+        Log(L"Could not duplicate PNG clipboard data for image/png format.");
+    } else if (!png) {
+        Log(L"PNG clipboard data was not created: " + error);
+    }
+
+    HGLOBAL fileDrop = nullptr;
+    HGLOBAL dropEffect = nullptr;
+    if (!imageFilePath.empty() && std::filesystem::exists(imageFilePath)) {
+        fileDrop = CreateFileDropData(imageFilePath);
+        dropEffect = CreatePreferredDropEffectData();
+        if (!fileDrop) {
+            Log(L"Could not create CF_HDROP clipboard data for " + imageFilePath.wstring());
+        }
+    }
 
     void* bits = nullptr;
     BITMAPINFO bitmapInfo = {};
@@ -674,6 +906,18 @@ bool CopyBgraToClipboard(HWND hwnd, UINT width, UINT height, const std::vector<u
         if (dibV5) {
             GlobalFree(dibV5);
         }
+        if (png) {
+            GlobalFree(png);
+        }
+        if (imagePng) {
+            GlobalFree(imagePng);
+        }
+        if (fileDrop) {
+            GlobalFree(fileDrop);
+        }
+        if (dropEffect) {
+            GlobalFree(dropEffect);
+        }
         if (bitmap) {
             DeleteObject(bitmap);
         }
@@ -683,6 +927,44 @@ bool CopyBgraToClipboard(HWND hwnd, UINT width, UINT height, const std::vector<u
     EmptyClipboard();
 
     bool copied = false;
+    if (fileDrop) {
+        if (SetClipboardData(CF_HDROP, fileDrop)) {
+            copied = true;
+            fileDrop = nullptr;
+        } else {
+            Log(L"SetClipboardData CF_HDROP failed: " + LastErrorMessage(GetLastError()));
+        }
+    }
+
+    const UINT preferredDropEffectFormat = RegisterClipboardFormatW(L"Preferred DropEffect");
+    if (preferredDropEffectFormat != 0 && dropEffect) {
+        if (SetClipboardData(preferredDropEffectFormat, dropEffect)) {
+            dropEffect = nullptr;
+        } else {
+            Log(L"SetClipboardData Preferred DropEffect failed: " + LastErrorMessage(GetLastError()));
+        }
+    }
+
+    const UINT pngFormat = RegisterClipboardFormatW(L"PNG");
+    if (pngFormat != 0 && png) {
+        if (SetClipboardData(pngFormat, png)) {
+            copied = true;
+            png = nullptr;
+        } else {
+            Log(L"SetClipboardData PNG failed: " + LastErrorMessage(GetLastError()));
+        }
+    }
+
+    const UINT imagePngFormat = RegisterClipboardFormatW(L"image/png");
+    if (imagePngFormat != 0 && imagePng) {
+        if (SetClipboardData(imagePngFormat, imagePng)) {
+            copied = true;
+            imagePng = nullptr;
+        } else {
+            Log(L"SetClipboardData image/png failed: " + LastErrorMessage(GetLastError()));
+        }
+    }
+
     if (dibV5) {
         if (SetClipboardData(CF_DIBV5, dibV5)) {
             copied = true;
@@ -719,6 +1001,18 @@ bool CopyBgraToClipboard(HWND hwnd, UINT width, UINT height, const std::vector<u
         if (dibV5) {
             GlobalFree(dibV5);
         }
+        if (png) {
+            GlobalFree(png);
+        }
+        if (imagePng) {
+            GlobalFree(imagePng);
+        }
+        if (fileDrop) {
+            GlobalFree(fileDrop);
+        }
+        if (dropEffect) {
+            GlobalFree(dropEffect);
+        }
         if (bitmap) {
             DeleteObject(bitmap);
         }
@@ -731,6 +1025,18 @@ bool CopyBgraToClipboard(HWND hwnd, UINT width, UINT height, const std::vector<u
     }
     if (dibV5) {
         GlobalFree(dibV5);
+    }
+    if (png) {
+        GlobalFree(png);
+    }
+    if (imagePng) {
+        GlobalFree(imagePng);
+    }
+    if (fileDrop) {
+        GlobalFree(fileDrop);
+    }
+    if (dropEffect) {
+        GlobalFree(dropEffect);
     }
     if (bitmap) {
         DeleteObject(bitmap);
@@ -1667,7 +1973,7 @@ private:
         const auto previewPath = hdrPath;
         auto pngPath = previewPath;
         pngPath.replace_extension(L".preview.png");
-        if (!SaveWicBitmapFromMemory(
+        const bool previewSaved = SaveWicBitmapFromMemory(
                 pngPath,
                 GUID_ContainerFormatPng,
                 GUID_WICPixelFormat32bppBGRA,
@@ -1675,11 +1981,12 @@ private:
                 height,
                 width * 4,
                 sdrPreview,
-                error)) {
+                error);
+        if (!previewSaved) {
             Log(L"Preview PNG save failed: " + error);
         }
 
-        if (!CopyBgraToClipboard(hiddenHwnd_, width, height, sdrPreview, error)) {
+        if (!CopyBgraToClipboard(hiddenHwnd_, width, height, sdrPreview, previewSaved ? pngPath : std::filesystem::path(), error)) {
             Log(L"Clipboard copy failed: " + error);
             ShowNotification(kAppName, L"HDR screenshot saved. Clipboard preview failed.");
             if (!mirrorVisible_) {

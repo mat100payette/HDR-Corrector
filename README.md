@@ -7,12 +7,49 @@
 [![Windows 11](https://img.shields.io/badge/platform-Windows%2011-0078D4?logo=windows11&logoColor=white&style=flat-square)](https://github.com/mat100payette/HDR-Corrector/releases/latest)
 [![C++20](https://img.shields.io/badge/C%2B%2B-20-00599C?logo=cplusplus&logoColor=white&style=flat-square)](https://github.com/mat100payette/HDR-Corrector)
 
-HDR Corrector is a small native Windows tray utility for the common Windows 11 HDR capture problem: SDR capture tools, screenshot viewers, and Discord screen share often treat HDR desktop pixels incorrectly, producing overly bright or washed-out output.
+HDR Corrector is a native Windows 11 tray utility that captures HDR desktop content correctly and produces SDR-friendly screenshots and stream mirrors.
 
-HDR Corrector does **not** disable HDR on the monitor. It keeps the source display in HDR and captures the desktop through Windows Graphics Capture as `R16G16B16A16_FLOAT` scRGB frames.
+It is built for the common Windows HDR capture problem where screenshots, screen share, and SDR viewers treat HDR desktop pixels incorrectly, resulting in overly bright or washed-out output. HDR Corrector keeps the display in HDR and captures the desktop through Windows Graphics Capture as `R16G16B16A16_FLOAT` scRGB frames.
 
-- **HDR screenshots:** press `Ctrl+PrtScn`. HDR Corrector copies the screenshot preview to the clipboard, saves a `.jxr` JPEG XR screenshot containing the HDR half-float capture, and writes a tone-mapped `.preview.png` for SDR apps.
-- **Live stream mirror:** press `Ctrl+Alt+H`. HDR Corrector opens a separate "HDR Corrector Stream Mirror" window rendered from the HDR capture stream with GPU tone mapping. Share this window in Discord instead of sharing the HDR monitor directly.
+## Download
+
+Download the latest `HDRCorrector-vX.Y.Z-win-x64.zip` from [GitHub Releases](https://github.com/mat100payette/HDR-Corrector/releases/latest), extract it, and run `HDRCorrector.exe`.
+
+Each release includes `SHA256SUMS.txt` for verifying the downloaded zip.
+
+## Features
+
+- `Ctrl+PrtScn` captures the selected HDR monitor.
+- Saves an HDR `.jxr` screenshot with the original half-float capture.
+- Saves a tone-mapped `.preview.png` for SDR apps and uploads.
+- Copies a paste-friendly preview to the clipboard, including a PNG/file-drop fallback for stricter apps.
+- `Ctrl+Alt+H` opens a tone-mapped "HDR Corrector Stream Mirror" window for apps such as Discord.
+- Right-click tray menu for capture, mirror, monitor selection, startup toggle, screenshot folder, and exit.
+
+## Usage
+
+Run `HDRCorrector.exe`. The app starts in the notification area.
+
+Hotkeys:
+
+| Action | Shortcut |
+| --- | --- |
+| Capture HDR screenshot | `Ctrl+PrtScn` |
+| Show or hide stream mirror | `Ctrl+Alt+H` |
+
+For Discord screen share, share the `HDR Corrector Stream Mirror` window instead of sharing the HDR monitor directly.
+
+Screenshots are saved under:
+
+```text
+%USERPROFILE%\Pictures\HDRCorrector
+```
+
+Logs are written under:
+
+```text
+%LOCALAPPDATA%\HDRCorrector\hdr-corrector.log
+```
 
 ## Why this approach
 
@@ -20,7 +57,16 @@ Discord does not expose a public capture-processing hook, and a normal backgroun
 
 If the receiving service only accepts SDR video, a local utility cannot force true HDR metadata and HDR transport through that service. In that case the correct no-driver path is high-quality tone mapping from the HDR source into an SDR-compatible mirror. The source display remains HDR, HDR screenshots remain HDR, and the live stream avoids the washed-out Windows HDR capture path.
 
-HDR Corrector keeps the implementation intentionally small:
+## How It Works
+
+HDR Corrector keeps the pipeline small and local:
+
+1. It captures the selected monitor with Windows Graphics Capture using `R16G16B16A16_FLOAT`, which preserves the HDR desktop as scRGB half-float pixels.
+2. For screenshots, it saves the original HDR frame as `.jxr`, then tone maps the same frame into an SDR `.preview.png`.
+3. The SDR preview is copied to the clipboard in multiple formats: Windows bitmap formats, encoded PNG formats, and a file-drop reference to the saved preview PNG for apps that prefer pasted files.
+4. For live sharing, it renders the HDR capture stream into a separate D3D11 mirror window with GPU tone mapping. Apps such as Discord can share that window instead of capturing the HDR monitor directly.
+
+## Design
 
 - Native C++/Win32, Windows Graphics Capture, and D3D11.
 - No network access.
@@ -30,15 +76,7 @@ HDR Corrector keeps the implementation intentionally small:
 - No HDR display toggling.
 - No runtime dependency when built with the provided script and MSVC static runtime on Windows 11.
 
-## Download
-
-Prebuilt Windows x64 packages are published on the GitHub Releases page.
-
-Download the latest `HDRCorrector-vX.Y.Z-win-x64.zip`, extract it, and run `HDRCorrector.exe`.
-
-Each release also includes `SHA256SUMS.txt` so the downloaded zip can be verified.
-
-## VS Code Development
+## Build
 
 Requirements:
 
@@ -79,6 +117,8 @@ dist\HDRCorrector.exe          Release, default command-line build
 dist\Debug\HDRCorrector.exe    Debug, used by VS Code F5
 ```
 
+## Package
+
 Create local release artifacts:
 
 ```powershell
@@ -93,7 +133,7 @@ artifacts\HDRCorrector-v0.1.0-win-x64-symbols.zip
 artifacts\SHA256SUMS.txt
 ```
 
-## Release
+## Maintainer Release
 
 Releases are tag-driven. Commit your changes first, then run:
 
@@ -143,40 +183,6 @@ Local signed packaging is also supported:
 ```powershell
 .\scripts\package.ps1 -Version 0.1.0 -Clean -SignPfxPath C:\path\to\certificate.pfx -SignPfxPassword "pfx-password"
 ```
-
-## Run
-
-```powershell
-.\dist\HDRCorrector.exe
-```
-
-The app starts in the notification area. Right-click the tray icon for:
-
-- `Capture HDR screenshot`
-- `Show stream mirror`
-- `Use monitor under cursor`
-- `Run at startup`
-- `Open screenshots folder`
-- `Exit`
-
-Screenshots are saved under:
-
-```text
-%USERPROFILE%\Pictures\HDRCorrector
-```
-
-Logs are written under:
-
-```text
-%LOCALAPPDATA%\HDRCorrector\hdr-corrector.log
-```
-
-## Hotkeys
-
-- `Ctrl+PrtScn`: copy the screenshot preview to the clipboard and save the HDR `.jxr`.
-- `Ctrl+Alt+H`: show or hide the stream mirror window.
-
-If another application owns `Ctrl+PrtScn`, use the tray menu instead.
 
 ## Notes
 
