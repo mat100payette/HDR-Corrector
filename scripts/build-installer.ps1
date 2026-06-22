@@ -35,7 +35,10 @@ if (![string]::IsNullOrWhiteSpace($CertificatePath) -and (Test-Path -LiteralPath
 $installerRoot = Join-Path $repoRoot "installer"
 $source = Join-Path $installerRoot "setup.cpp"
 $resourceHeader = Join-Path $installerRoot "resource.h"
-$icon = Join-Path $repoRoot "src\app.ico"
+$icon = Join-Path $installerRoot "setup.ico"
+if (!(Test-Path -LiteralPath $icon)) {
+    $icon = Join-Path $repoRoot "src\app.ico"
+}
 $buildRoot = Join-Path $repoRoot "build\Installer"
 $versionHeader = Join-Path $buildRoot "setup_version.h"
 $resourceScript = Join-Path $buildRoot "setup_resources.rc"
