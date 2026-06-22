@@ -908,7 +908,7 @@ private:
         data.cbSize = sizeof(data);
         data.hWnd = hiddenHwnd_;
         data.uID = kTrayIconId;
-        data.uFlags = NIF_MESSAGE | NIF_ICON | NIF_TIP;
+        data.uFlags = NIF_MESSAGE | NIF_ICON | NIF_TIP | NIF_SHOWTIP;
         data.uCallbackMessage = kTrayMessage;
         data.hIcon = AppSmallIcon();
         CopyTruncated(data.szTip, TrayTooltip());
@@ -924,7 +924,7 @@ private:
         data.cbSize = sizeof(data);
         data.hWnd = hiddenHwnd_;
         data.uID = kTrayIconId;
-        data.uFlags = NIF_TIP;
+        data.uFlags = NIF_TIP | NIF_SHOWTIP;
         CopyTruncated(data.szTip, TrayTooltip());
         Shell_NotifyIconW(NIM_MODIFY, &data);
     }
