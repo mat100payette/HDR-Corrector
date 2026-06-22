@@ -2,6 +2,7 @@ param(
     [string]$Version,
     [switch]$Clean,
     [switch]$SkipBuild,
+    [switch]$IncludeMsix,
     [string]$SignCertificateThumbprint,
     [string]$SignPfxPath,
     [string]$SignPfxPassword,
@@ -20,6 +21,9 @@ $staging = Join-Path $artifactsRoot $assetBase
 $symbolsStaging = Join-Path $artifactsRoot "$assetBase-symbols"
 $zip = Join-Path $artifactsRoot "$assetBase.zip"
 $symbolsZip = Join-Path $artifactsRoot "$assetBase-symbols.zip"
+$msix = Join-Path $artifactsRoot "$assetBase.msix"
+$msixCertificate = Join-Path $artifactsRoot "$assetBase-msix.cer"
+$msixInstallScript = Join-Path $artifactsRoot "Install-$assetBase-msix.ps1"
 $checksums = Join-Path $artifactsRoot "SHA256SUMS.txt"
 
 if ($Clean) {
@@ -63,6 +67,9 @@ Remove-Item -LiteralPath $staging -Recurse -Force -ErrorAction SilentlyContinue
 Remove-Item -LiteralPath $symbolsStaging -Recurse -Force -ErrorAction SilentlyContinue
 Remove-Item -LiteralPath $zip -Force -ErrorAction SilentlyContinue
 Remove-Item -LiteralPath $symbolsZip -Force -ErrorAction SilentlyContinue
+Remove-Item -LiteralPath $msix -Force -ErrorAction SilentlyContinue
+Remove-Item -LiteralPath $msixCertificate -Force -ErrorAction SilentlyContinue
+Remove-Item -LiteralPath $msixInstallScript -Force -ErrorAction SilentlyContinue
 Remove-Item -LiteralPath $checksums -Force -ErrorAction SilentlyContinue
 
 New-Item -ItemType Directory -Force -Path $staging | Out-Null
@@ -86,6 +93,36 @@ if (Test-Path -LiteralPath $pdb) {
     $checksumTargets += $symbolsZip
 }
 
+if ($IncludeMsix) {
+    $msixArgs = @{
+        Version = $versionInfo.Version
+        SkipBuild = $true
+        Clean = $true
+        TimestampServer = $TimestampServer
+    }
+    if (![string]::IsNullOrWhiteSpace($SignCertificateThumbprint)) {
+        $msixArgs["SignCertificateThumbprint"] = $SignCertificateThumbprint
+    }
+    if (![string]::IsNullOrWhiteSpace($SignPfxPath)) {
+        $msixArgs["SignPfxPath"] = $SignPfxPath
+    }
+    if (![string]::IsNullOrWhiteSpace($SignPfxPassword)) {
+        $msixArgs["SignPfxPassword"] = $SignPfxPassword
+    }
+
+    & (Join-Path $PSScriptRoot "package-msix.ps1") @msixArgs
+
+    if (Test-Path -LiteralPath $msix) {
+        $checksumTargets += $msix
+    }
+    if (Test-Path -LiteralPath $msixCertificate) {
+        $checksumTargets += $msixCertificate
+    }
+    if (Test-Path -LiteralPath $msixInstallScript) {
+        $checksumTargets += $msixInstallScript
+    }
+}
+
 $checksumLines = foreach ($target in $checksumTargets) {
     $hash = Get-FileHash -LiteralPath $target -Algorithm SHA256
     "$($hash.Hash.ToLowerInvariant())  $(Split-Path -Leaf $target)"
@@ -96,5 +133,14 @@ Write-Host "Created release artifacts:"
 Write-Host "  $zip"
 if (Test-Path -LiteralPath $symbolsZip) {
     Write-Host "  $symbolsZip"
+}
+if (Test-Path -LiteralPath $msix) {
+    Write-Host "  $msix"
+}
+if (Test-Path -LiteralPath $msixCertificate) {
+    Write-Host "  $msixCertificate"
+}
+if (Test-Path -LiteralPath $msixInstallScript) {
+    Write-Host "  $msixInstallScript"
 }
 Write-Host "  $checksums"

@@ -40,3 +40,29 @@ function Resolve-HdrCorrectorVersion {
         FileVersion = "$major.$minor.$patch.$build"
     }
 }
+
+function Find-WindowsSdkTool {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$ToolName
+    )
+
+    $command = Get-Command $ToolName -ErrorAction SilentlyContinue
+    if ($command) {
+        return $command.Source
+    }
+
+    $kitsRoot = Join-Path ${env:ProgramFiles(x86)} "Windows Kits\10\bin"
+    if (Test-Path -LiteralPath $kitsRoot) {
+        $candidate = Get-ChildItem -LiteralPath $kitsRoot -Recurse -Filter $ToolName -ErrorAction SilentlyContinue |
+            Where-Object { $_.FullName -match '\\x64\\' } |
+            Sort-Object FullName -Descending |
+            Select-Object -First 1
+
+        if ($candidate) {
+            return $candidate.FullName
+        }
+    }
+
+    throw "$ToolName was not found. Install the Windows SDK."
+}

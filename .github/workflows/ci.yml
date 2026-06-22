@@ -14,8 +14,12 @@ jobs:
 
     steps:
       - name: Check out repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@v4
 
       - name: Build
         shell: pwsh
         run: .\scripts\build.ps1 -Configuration Release
+
+      - name: Package MSIX
+        shell: pwsh
+        run: .\scripts\package-msix.ps1 -Version 0.1.0 -SkipBuild -Clean

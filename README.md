@@ -16,7 +16,15 @@ It is built for the common Windows HDR capture problem where screenshots, screen
 
 Download the latest `HDRCorrector-vX.Y.Z-win-x64.zip` from [GitHub Releases](https://github.com/mat100payette/HDR-Corrector/releases/latest), extract it, and run `HDRCorrector.exe`.
 
-Each release includes `SHA256SUMS.txt` for verifying the downloaded zip.
+Each release includes `SHA256SUMS.txt` for verifying the downloaded artifacts.
+
+Optional MSIX install:
+
+1. Download `HDRCorrector-vX.Y.Z-win-x64.msix`.
+2. If the release also includes `Install-HDRCorrector-vX.Y.Z-win-x64-msix.ps1` and `HDRCorrector-vX.Y.Z-win-x64-msix.cer`, download all three files into the same folder.
+3. Run the install script in PowerShell.
+
+The portable zip is the simplest option. The MSIX build gives HDR Corrector package identity, which lets Windows offer a borderless-capture consent path for the stream mirror. If the MSIX is signed with a trusted certificate, users can install it directly. If it is self-signed, the install script trusts the included certificate for the current user before installing.
 
 ## Features
 
@@ -45,6 +53,8 @@ For Discord screen share, share the `HDR Corrector Stream Mirror` window instead
 
 If you hear local echo or doubled audio, right-click the tray icon and uncheck **Relay desktop audio with mirror**. You can also lower or mute **HDR Corrector Stream Audio** in the Windows volume mixer if Discord still receives the stream audio on your setup.
 
+The portable build uses the normal Windows capture border while the mirror is active. The MSIX build requests Windows borderless-capture consent on first capture; if Windows grants it, the mirror can run without the colored capture border. If consent is denied, capture still works with the border.
+
 Screenshots are saved under:
 
 ```text
@@ -72,6 +82,7 @@ HDR Corrector keeps the pipeline small and local:
 3. The SDR preview is copied to the clipboard in multiple formats: Windows bitmap formats, encoded PNG formats, and a file-drop reference to the saved preview PNG for apps that prefer pasted files.
 4. For live sharing, it renders the HDR capture stream into a separate D3D11 mirror window with GPU tone mapping. Apps such as Discord can share that window instead of capturing the HDR monitor directly.
 5. When the audio relay is enabled, it uses WASAPI process loopback to capture desktop audio while excluding HDR Corrector's own process, then renders that audio from an HDR Corrector audio session. This gives application-based stream capture a matching audio source without a driver or Discord injection.
+6. In the MSIX build, the app declares `graphicsCaptureWithoutBorder` and requests Windows consent for borderless capture before starting a capture session. The portable build cannot use that packaged capability.
 
 ## Design
 
@@ -129,7 +140,7 @@ dist\Debug\HDRCorrector.exe    Debug, used by VS Code F5
 Create local release artifacts:
 
 ```powershell
-.\scripts\package.ps1 -Version 0.1.0 -Clean
+.\scripts\package.ps1 -Version 0.1.0 -Clean -IncludeMsix
 ```
 
 Package outputs:
@@ -137,8 +148,27 @@ Package outputs:
 ```text
 artifacts\HDRCorrector-v0.1.0-win-x64.zip
 artifacts\HDRCorrector-v0.1.0-win-x64-symbols.zip
+artifacts\HDRCorrector-v0.1.0-win-x64.msix
+artifacts\HDRCorrector-v0.1.0-win-x64-msix.cer
+artifacts\Install-HDRCorrector-v0.1.0-win-x64-msix.ps1
 artifacts\SHA256SUMS.txt
 ```
+
+Create only local MSIX artifacts:
+
+```powershell
+.\scripts\package-msix.ps1 -Version 0.1.0 -Clean
+```
+
+MSIX package outputs:
+
+```text
+artifacts\HDRCorrector-v0.1.0-win-x64.msix
+artifacts\HDRCorrector-v0.1.0-win-x64-msix.cer
+artifacts\Install-HDRCorrector-v0.1.0-win-x64-msix.ps1
+```
+
+When no signing certificate is provided, the MSIX script creates a self-signed local package and an install helper script. For a public release with a trusted certificate, pass the same signing inputs used by `package.ps1`.
 
 ## Maintainer Release
 

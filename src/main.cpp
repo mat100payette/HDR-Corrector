@@ -7,6 +7,7 @@
 #include "resource.h"
 
 #include <windows.h>
+#include <appmodel.h>
 #include <shellapi.h>
 #include <wincodec.h>
 #include <winreg.h>
@@ -20,6 +21,7 @@
 #include <winrt/Windows.Graphics.Capture.h>
 #include <winrt/Windows.Graphics.DirectX.h>
 #include <winrt/Windows.Graphics.DirectX.Direct3D11.h>
+#include <winrt/Windows.Security.Authorization.AppCapabilityAccess.h>
 
 #include <windows.graphics.capture.interop.h>
 #include <windows.graphics.directx.direct3d11.interop.h>
@@ -30,18 +32,23 @@
 #include <cstring>
 #include <filesystem>
 #include <fstream>
+#include <future>
 #include <iterator>
 #include <mutex>
 #include <sstream>
 #include <string>
 #include <string_view>
+#include <thread>
 #include <vector>
 
 using winrt::Windows::Graphics::Capture::Direct3D11CaptureFramePool;
+using winrt::Windows::Graphics::Capture::GraphicsCaptureAccess;
+using winrt::Windows::Graphics::Capture::GraphicsCaptureAccessKind;
 using winrt::Windows::Graphics::Capture::GraphicsCaptureItem;
 using winrt::Windows::Graphics::Capture::GraphicsCaptureSession;
 using winrt::Windows::Graphics::DirectX::Direct3D11::IDirect3DDevice;
 using winrt::Windows::Graphics::DirectX::DirectXPixelFormat;
+using winrt::Windows::Security::Authorization::AppCapabilityAccess::AppCapabilityAccessStatus;
 using DxgiInterfaceAccess = ::Windows::Graphics::DirectX::Direct3D11::IDirect3DDxgiInterfaceAccess;
 
 namespace {
@@ -310,6 +317,23 @@ std::wstring MonitorName(HMONITOR monitor) {
         return info.szDevice;
     }
     return L"selected monitor";
+}
+
+std::wstring AppCapabilityAccessStatusName(AppCapabilityAccessStatus status) {
+    switch (status) {
+    case AppCapabilityAccessStatus::Allowed:
+        return L"Allowed";
+    case AppCapabilityAccessStatus::DeniedBySystem:
+        return L"DeniedBySystem";
+    case AppCapabilityAccessStatus::DeniedByUser:
+        return L"DeniedByUser";
+    case AppCapabilityAccessStatus::NotDeclaredByApp:
+        return L"NotDeclaredByApp";
+    case AppCapabilityAccessStatus::UserPromptRequired:
+        return L"UserPromptRequired";
+    default:
+        return L"Unknown";
+    }
 }
 
 float SdrWhiteScaleForMonitor(HMONITOR monitor) {
@@ -1061,6 +1085,7 @@ private:
                 captureSize_);
             frameArrivedToken_ = framePool_.FrameArrived({this, &App::OnFrameArrived});
             captureSession_ = framePool_.CreateCaptureSession(captureItem_);
+            ApplyCaptureBorderPreference();
             captureSession_.IsCursorCaptureEnabled(true);
             captureSession_.StartCapture();
 
@@ -1117,6 +1142,78 @@ private:
             Log(L"Create active window capture item failed: " + std::wstring(error.message()));
             ShowNotification(kAppName, L"Could not capture the active window. See log for details.");
             return false;
+        }
+    }
+
+    bool HasPackageIdentity() {
+        if (!packageIdentityChecked_) {
+            UINT32 length = 0;
+            const LONG result = GetCurrentPackageFullName(&length, nullptr);
+            hasPackageIdentity_ = result == ERROR_INSUFFICIENT_BUFFER;
+            if (result != ERROR_INSUFFICIENT_BUFFER && result != APPMODEL_ERROR_NO_PACKAGE) {
+                Log(L"GetCurrentPackageFullName failed while checking package identity: " + LastErrorMessage(result));
+            }
+            packageIdentityChecked_ = true;
+        }
+
+        return hasPackageIdentity_;
+    }
+
+    AppCapabilityAccessStatus RequestBorderlessAccessOnBackgroundThread() {
+        std::promise<AppCapabilityAccessStatus> promise;
+        auto future = promise.get_future();
+        std::thread worker([promise = std::move(promise)]() mutable {
+            bool apartmentInitialized = false;
+            try {
+                winrt::init_apartment(winrt::apartment_type::multi_threaded);
+                apartmentInitialized = true;
+                promise.set_value(GraphicsCaptureAccess::RequestAccessAsync(GraphicsCaptureAccessKind::Borderless).get());
+            } catch (...) {
+                promise.set_exception(std::current_exception());
+            }
+            if (apartmentInitialized) {
+                winrt::uninit_apartment();
+            }
+        });
+
+        worker.join();
+        return future.get();
+    }
+
+    bool CanUseBorderlessCapture() {
+        if (!HasPackageIdentity()) {
+            return false;
+        }
+
+        if (!borderlessCaptureAccessChecked_) {
+            borderlessCaptureAccessChecked_ = true;
+            try {
+                const AppCapabilityAccessStatus status = RequestBorderlessAccessOnBackgroundThread();
+                borderlessCaptureAllowed_ = status == AppCapabilityAccessStatus::Allowed;
+                if (borderlessCaptureAllowed_) {
+                    Log(L"Borderless capture access granted.");
+                } else {
+                    Log(L"Borderless capture access not granted: " + AppCapabilityAccessStatusName(status));
+                }
+            } catch (const winrt::hresult_error& error) {
+                Log(L"Borderless capture access request failed: " + std::wstring(error.message()));
+            } catch (...) {
+                Log(L"Borderless capture access request failed.");
+            }
+        }
+
+        return borderlessCaptureAllowed_;
+    }
+
+    void ApplyCaptureBorderPreference() {
+        if (!captureSession_ || !CanUseBorderlessCapture()) {
+            return;
+        }
+
+        try {
+            captureSession_.IsBorderRequired(false);
+        } catch (const winrt::hresult_error& error) {
+            Log(L"Could not disable capture border: " + std::wstring(error.message()));
         }
     }
 
@@ -1725,6 +1822,10 @@ private:
     UINT taskbarCreatedMessage_ = 0;
     bool mirrorVisible_ = false;
     bool audioRelayEnabled_ = true;
+    bool packageIdentityChecked_ = false;
+    bool hasPackageIdentity_ = false;
+    bool borderlessCaptureAccessChecked_ = false;
+    bool borderlessCaptureAllowed_ = false;
     AudioRelay audioRelay_;
 
     winrt::com_ptr<ID3D11Device> d3dDevice_;
