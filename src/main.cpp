@@ -1,6 +1,7 @@
 #define NOMINMAX
 #define WIN32_LEAN_AND_MEAN
 
+#include "audio_relay.h"
 #include "clipboard.h"
 #include "platform.h"
 
@@ -55,6 +56,7 @@ constexpr UINT kRenderMirrorMessage = WM_APP + 2;
 constexpr UINT_PTR kTrayIconId = 1;
 constexpr int kHotkeyScreenshot = 100;
 constexpr int kHotkeyMirror = 101;
+constexpr int kHotkeyWindowScreenshot = 102;
 
 constexpr UINT kCmdScreenshot = 200;
 constexpr UINT kCmdMirror = 201;
@@ -62,6 +64,8 @@ constexpr UINT kCmdSelectMonitor = 202;
 constexpr UINT kCmdStartup = 203;
 constexpr UINT kCmdOpenFolder = 204;
 constexpr UINT kCmdExit = 205;
+constexpr UINT kCmdAudioRelay = 206;
+constexpr UINT kCmdWindowScreenshot = 207;
 
 constexpr DXGI_FORMAT kCaptureFormat = DXGI_FORMAT_R16G16B16A16_FLOAT;
 constexpr DirectXPixelFormat kFramePoolFormat = DirectXPixelFormat::R16G16B16A16Float;
@@ -280,6 +284,22 @@ HMONITOR MonitorUnderCursor() {
     POINT cursor = {};
     GetCursorPos(&cursor);
     return MonitorFromPoint(cursor, MONITOR_DEFAULTTOPRIMARY);
+}
+
+std::wstring WindowTitle(HWND hwnd) {
+    const int length = GetWindowTextLengthW(hwnd);
+    if (length <= 0) {
+        return L"active window";
+    }
+
+    std::wstring title(static_cast<size_t>(length) + 1, L'\0');
+    const int copied = GetWindowTextW(hwnd, title.data(), length + 1);
+    if (copied <= 0) {
+        return L"active window";
+    }
+
+    title.resize(static_cast<size_t>(copied));
+    return title;
 }
 
 std::wstring MonitorName(HMONITOR monitor) {
@@ -661,6 +681,7 @@ private:
         case WM_CLOSE:
             ShowWindow(hwnd, SW_HIDE);
             mirrorVisible_ = false;
+            audioRelay_.Stop();
             StopCapture();
             UpdateTrayTooltip();
             return 0;
@@ -852,6 +873,10 @@ private:
             Log(L"Could not register Ctrl+PrtScn: " + LastErrorMessage(GetLastError()));
         }
 
+        if (!RegisterHotKey(hiddenHwnd_, kHotkeyWindowScreenshot, MOD_CONTROL | MOD_ALT | MOD_NOREPEAT, VK_SNAPSHOT)) {
+            Log(L"Could not register Ctrl+Alt+PrtScn: " + LastErrorMessage(GetLastError()));
+        }
+
         if (!RegisterHotKey(hiddenHwnd_, kHotkeyMirror, MOD_CONTROL | MOD_ALT | MOD_NOREPEAT, 'H')) {
             Log(L"Could not register Ctrl+Alt+H: " + LastErrorMessage(GetLastError()));
         }
@@ -884,7 +909,10 @@ private:
     }
 
     std::wstring TrayTooltip() const {
-        return mirrorVisible_ ? L"HDR Corrector - mirror visible" : L"HDR Corrector";
+        if (!mirrorVisible_) {
+            return L"HDR Corrector";
+        }
+        return audioRelay_.IsRunning() ? L"HDR Corrector - mirror and audio relay visible" : L"HDR Corrector - mirror visible";
     }
 
     void ShowNotification(const std::wstring& title, const std::wstring& message) const {
@@ -923,11 +951,17 @@ private:
         }
 
         AppendMenuW(menu, MF_STRING, kCmdScreenshot, L"Capture HDR screenshot\tCtrl+PrtScn");
+        AppendMenuW(menu, MF_STRING, kCmdWindowScreenshot, L"Capture active window\tCtrl+Alt+PrtScn");
         AppendMenuW(
             menu,
             MF_STRING | (mirrorVisible_ ? MF_CHECKED : MF_UNCHECKED),
             kCmdMirror,
             L"Show stream mirror\tCtrl+Alt+H");
+        AppendMenuW(
+            menu,
+            MF_STRING | (audioRelayEnabled_ ? MF_CHECKED : MF_UNCHECKED),
+            kCmdAudioRelay,
+            L"Relay desktop audio with mirror");
         AppendMenuW(menu, MF_STRING, kCmdSelectMonitor, L"Use monitor under cursor");
         AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
         AppendMenuW(menu, MF_STRING | (IsStartupEnabled() ? MF_CHECKED : MF_UNCHECKED), kCmdStartup, L"Run at startup");
@@ -945,6 +979,9 @@ private:
         case kCmdScreenshot:
             CaptureScreenshot();
             break;
+        case kCmdWindowScreenshot:
+            CaptureActiveWindowScreenshot();
+            break;
         case kCmdMirror:
             ToggleMirrorWindow();
             break;
@@ -953,6 +990,9 @@ private:
             break;
         case kCmdStartup:
             ToggleStartup();
+            break;
+        case kCmdAudioRelay:
+            ToggleAudioRelay();
             break;
         case kCmdOpenFolder:
             OpenScreenshotsFolder();
@@ -970,6 +1010,9 @@ private:
         case kHotkeyScreenshot:
             CaptureScreenshot();
             break;
+        case kHotkeyWindowScreenshot:
+            CaptureActiveWindowScreenshot();
+            break;
         case kHotkeyMirror:
             ToggleMirrorWindow();
             break;
@@ -978,7 +1021,7 @@ private:
         }
     }
 
-    bool StartCapture(HMONITOR monitor) {
+    bool StartCaptureItem(const GraphicsCaptureItem& item, const std::wstring& label, float sdrWhiteScale, bool notify) {
         StopCapture();
 
         try {
@@ -986,17 +1029,10 @@ private:
                 ResetEvent(frameReadyEvent_);
             }
 
-            auto interop = winrt::get_activation_factory<GraphicsCaptureItem, IGraphicsCaptureItemInterop>();
-            GraphicsCaptureItem item = nullptr;
-            winrt::check_hresult(interop->CreateForMonitor(
-                monitor,
-                winrt::guid_of<GraphicsCaptureItem>(),
-                winrt::put_abi(item)));
-
             captureItem_ = item;
             captureSize_ = item.Size();
-            capturedMonitorName_ = MonitorName(monitor);
-            sdrWhiteScale_ = SdrWhiteScaleForMonitor(monitor);
+            capturedMonitorName_ = label;
+            sdrWhiteScale_ = sdrWhiteScale;
             framePool_ = Direct3D11CaptureFramePool::CreateFreeThreaded(
                 direct3DDevice_,
                 kFramePoolFormat,
@@ -1014,14 +1050,51 @@ private:
                 latestHeight_ = 0;
             }
 
-            std::wstringstream stream;
-            stream << L"Capturing " << capturedMonitorName_ << L" at " << captureSize_.Width << L"x" << captureSize_.Height
-                   << L", SDR white scale " << sdrWhiteScale_;
-            ShowNotification(kAppName, stream.str());
+            if (notify) {
+                std::wstringstream stream;
+                stream << L"Capturing " << capturedMonitorName_ << L" at " << captureSize_.Width << L"x" << captureSize_.Height
+                       << L", SDR white scale " << sdrWhiteScale_;
+                ShowNotification(kAppName, stream.str());
+            }
             return true;
         } catch (const winrt::hresult_error& error) {
             Log(L"StartCapture failed: " + std::wstring(error.message()));
             ShowNotification(kAppName, L"Could not start HDR capture. See log for details.");
+            return false;
+        }
+    }
+
+    bool StartCapture(HMONITOR monitor, bool notify = true) {
+        try {
+            auto interop = winrt::get_activation_factory<GraphicsCaptureItem, IGraphicsCaptureItemInterop>();
+            GraphicsCaptureItem item = nullptr;
+            winrt::check_hresult(interop->CreateForMonitor(
+                monitor,
+                winrt::guid_of<GraphicsCaptureItem>(),
+                winrt::put_abi(item)));
+
+            return StartCaptureItem(item, MonitorName(monitor), SdrWhiteScaleForMonitor(monitor), notify);
+        } catch (const winrt::hresult_error& error) {
+            Log(L"Create monitor capture item failed: " + std::wstring(error.message()));
+            ShowNotification(kAppName, L"Could not start HDR capture. See log for details.");
+            return false;
+        }
+    }
+
+    bool StartWindowCapture(HWND hwnd, bool notify = true) {
+        try {
+            auto interop = winrt::get_activation_factory<GraphicsCaptureItem, IGraphicsCaptureItemInterop>();
+            GraphicsCaptureItem item = nullptr;
+            winrt::check_hresult(interop->CreateForWindow(
+                hwnd,
+                winrt::guid_of<GraphicsCaptureItem>(),
+                winrt::put_abi(item)));
+
+            HMONITOR monitor = MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST);
+            return StartCaptureItem(item, WindowTitle(hwnd), SdrWhiteScaleForMonitor(monitor), notify);
+        } catch (const winrt::hresult_error& error) {
+            Log(L"Create active window capture item failed: " + std::wstring(error.message()));
+            ShowNotification(kAppName, L"Could not capture the active window. See log for details.");
             return false;
         }
     }
@@ -1061,7 +1134,7 @@ private:
             const auto contentSize = frame.ContentSize();
             if (contentSize.Width != captureSize_.Width || contentSize.Height != captureSize_.Height) {
                 captureSize_ = contentSize;
-                framePool_.Recreate(direct3DDevice_, kFramePoolFormat, 2, captureSize_);
+                framePool_.Recreate(direct3DDevice_, kFramePoolFormat, kFramePoolBufferCount, captureSize_);
             }
 
             auto access = frame.Surface().as<DxgiInterfaceAccess>();
@@ -1134,9 +1207,42 @@ private:
         if (mirrorVisible_) {
             SetForegroundWindow(mirrorHwnd_);
             RenderMirror();
+            StartAudioRelayForMirror();
         } else {
+            audioRelay_.Stop();
             StopCapture();
         }
+        UpdateTrayTooltip();
+    }
+
+    void StartAudioRelayForMirror() {
+        if (!audioRelayEnabled_ || audioRelay_.IsRunning()) {
+            return;
+        }
+
+        std::wstring error;
+        if (!audioRelay_.Start(error)) {
+            Log(L"Audio relay failed: " + error);
+            ShowNotification(kAppName, L"Stream mirror started, but audio relay failed. See log for details.");
+            return;
+        }
+
+        ShowNotification(kAppName, L"Stream mirror started with desktop audio relay.");
+        UpdateTrayTooltip();
+    }
+
+    void ToggleAudioRelay() {
+        audioRelayEnabled_ = !audioRelayEnabled_;
+
+        if (!audioRelayEnabled_) {
+            audioRelay_.Stop();
+            ShowNotification(kAppName, L"Audio relay disabled.");
+        } else if (mirrorVisible_) {
+            StartAudioRelayForMirror();
+        } else {
+            ShowNotification(kAppName, L"Audio relay will start with the stream mirror.");
+        }
+
         UpdateTrayTooltip();
     }
 
@@ -1401,35 +1507,13 @@ private:
         return bgra;
     }
 
-    void CaptureScreenshot() {
-        ShowNotification(kAppName, L"Capturing HDR screenshot...");
-
-        const bool wasCapturing = captureSession_ != nullptr;
-        if (!wasCapturing && !StartCapture(selectedMonitor_)) {
-            ShowNotification(kAppName, L"Could not start capture. See log for details.");
-            return;
-        }
-
-        if (!WaitForFirstFrame(wasCapturing ? kExistingCaptureFrameWaitMs : kNewCaptureFrameWaitMs)) {
-            Log(L"Timed out waiting for first capture frame.");
-            ShowNotification(kAppName, L"Screenshot failed waiting for capture frame.");
-            if (!mirrorVisible_) {
-                StopCapture();
-            }
-            return;
-        }
-
-        std::wstring error;
+    bool SaveCurrentCaptureFrameAsScreenshot(std::wstring& error) {
         UINT width = 0;
         UINT height = 0;
         std::vector<uint8_t> halfRgba;
         if (!CopyLatestFrameToCpu(halfRgba, width, height, error)) {
-            Log(L"Screenshot capture failed: " + error);
-            ShowNotification(kAppName, L"Screenshot failed. See log for details.");
-            if (!mirrorVisible_) {
-                StopCapture();
-            }
-            return;
+            error = L"Screenshot capture failed: " + error;
+            return false;
         }
 
         const auto hdrPath = MakeScreenshotPath(L".jxr");
@@ -1443,12 +1527,8 @@ private:
                 halfStride,
                 halfRgba,
                 error)) {
-            Log(L"HDR JXR save failed: " + error);
-            ShowNotification(kAppName, L"HDR screenshot save failed. See log for details.");
-            if (!mirrorVisible_) {
-                StopCapture();
-            }
-            return;
+            error = L"HDR JXR save failed: " + error;
+            return false;
         }
 
         const auto sdrPreview = ToneMapHalfRgbaToBgra8(halfRgba, width, height);
@@ -1469,8 +1549,67 @@ private:
         }
 
         if (!CopyBgraToClipboard(hiddenHwnd_, width, height, sdrPreview, previewSaved ? pngPath : std::filesystem::path(), error)) {
-            Log(L"Clipboard copy failed: " + error);
-            ShowNotification(kAppName, L"HDR screenshot saved. Clipboard preview failed.");
+            error = L"Clipboard copy failed: " + error;
+            return false;
+        }
+
+        return true;
+    }
+
+    void FinishTemporaryScreenshotCapture(bool restoreMirrorCapture) {
+        if (restoreMirrorCapture) {
+            if (StartCapture(selectedMonitor_, false)) {
+                RenderMirror();
+            } else {
+                Log(L"Could not restore stream mirror capture after active window screenshot.");
+            }
+            return;
+        }
+
+        if (!mirrorVisible_) {
+            StopCapture();
+        }
+    }
+
+    HWND ActiveWindowForScreenshot() const {
+        HWND hwnd = GetForegroundWindow();
+        if (!hwnd) {
+            return nullptr;
+        }
+
+        hwnd = GetAncestor(hwnd, GA_ROOT);
+        if (!hwnd || hwnd == hiddenHwnd_ || hwnd == GetDesktopWindow() || hwnd == GetShellWindow()) {
+            return nullptr;
+        }
+        if (!IsWindowVisible(hwnd) || IsIconic(hwnd)) {
+            return nullptr;
+        }
+
+        return hwnd;
+    }
+
+    void CaptureScreenshot() {
+        ShowNotification(kAppName, L"Capturing HDR screenshot...");
+
+        const bool wasCapturing = captureSession_ != nullptr;
+        if (!wasCapturing && !StartCapture(selectedMonitor_)) {
+            ShowNotification(kAppName, L"Could not start capture. See log for details.");
+            return;
+        }
+
+        if (!WaitForFirstFrame(wasCapturing ? kExistingCaptureFrameWaitMs : kNewCaptureFrameWaitMs)) {
+            Log(L"Timed out waiting for first capture frame.");
+            ShowNotification(kAppName, L"Screenshot failed waiting for capture frame.");
+            if (!mirrorVisible_) {
+                StopCapture();
+            }
+            return;
+        }
+
+        std::wstring error;
+        if (!SaveCurrentCaptureFrameAsScreenshot(error)) {
+            Log(error);
+            ShowNotification(kAppName, L"Screenshot failed. See log for details.");
             if (!mirrorVisible_) {
                 StopCapture();
             }
@@ -1481,6 +1620,42 @@ private:
         if (!mirrorVisible_) {
             StopCapture();
         }
+    }
+
+    void CaptureActiveWindowScreenshot() {
+        HWND hwnd = ActiveWindowForScreenshot();
+        if (!hwnd) {
+            ShowNotification(kAppName, L"No active window to capture.");
+            return;
+        }
+
+        const bool restoreMirrorCapture = mirrorVisible_;
+        ShowNotification(kAppName, L"Capturing active window HDR screenshot...");
+
+        if (!StartWindowCapture(hwnd, false)) {
+            if (restoreMirrorCapture) {
+                StartCapture(selectedMonitor_, false);
+            }
+            return;
+        }
+
+        if (!WaitForFirstFrame(kNewCaptureFrameWaitMs)) {
+            Log(L"Timed out waiting for first active window capture frame.");
+            ShowNotification(kAppName, L"Active window screenshot failed waiting for capture frame.");
+            FinishTemporaryScreenshotCapture(restoreMirrorCapture);
+            return;
+        }
+
+        std::wstring error;
+        if (!SaveCurrentCaptureFrameAsScreenshot(error)) {
+            Log(error);
+            ShowNotification(kAppName, L"Active window screenshot failed. See log for details.");
+            FinishTemporaryScreenshotCapture(restoreMirrorCapture);
+            return;
+        }
+
+        ShowNotification(kAppName, L"Active window screenshot copied. HDR .jxr saved.");
+        FinishTemporaryScreenshotCapture(restoreMirrorCapture);
     }
 
     void ToggleStartup() {
@@ -1499,8 +1674,10 @@ private:
 
     void Shutdown() {
         UnregisterHotKey(hiddenHwnd_, kHotkeyScreenshot);
+        UnregisterHotKey(hiddenHwnd_, kHotkeyWindowScreenshot);
         UnregisterHotKey(hiddenHwnd_, kHotkeyMirror);
         StopCapture();
+        audioRelay_.Stop();
 
         if (mirrorHwnd_) {
             DestroyWindow(mirrorHwnd_);
@@ -1526,6 +1703,8 @@ private:
     HANDLE frameReadyEvent_ = nullptr;
     UINT taskbarCreatedMessage_ = 0;
     bool mirrorVisible_ = false;
+    bool audioRelayEnabled_ = true;
+    AudioRelay audioRelay_;
 
     winrt::com_ptr<ID3D11Device> d3dDevice_;
     winrt::com_ptr<ID3D11DeviceContext> d3dContext_;

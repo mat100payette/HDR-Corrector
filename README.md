@@ -21,11 +21,13 @@ Each release includes `SHA256SUMS.txt` for verifying the downloaded zip.
 ## Features
 
 - `Ctrl+PrtScn` captures the selected HDR monitor.
+- `Ctrl+Alt+PrtScn` captures only the active window, similar to Windows `Alt+PrtScn`.
 - Saves an HDR `.jxr` screenshot with the original half-float capture.
 - Saves a tone-mapped `.preview.png` for SDR apps and uploads.
 - Copies a paste-friendly preview to the clipboard, including a PNG/file-drop fallback for stricter apps.
 - `Ctrl+Alt+H` opens a tone-mapped "HDR Corrector Stream Mirror" window for apps such as Discord.
-- Right-click tray menu for capture, mirror, monitor selection, startup toggle, screenshot folder, and exit.
+- Experimental desktop-audio relay for the mirror, enabled by default and toggleable from the tray menu.
+- Right-click tray menu for capture, mirror, audio relay, monitor selection, startup toggle, screenshot folder, and exit.
 
 ## Usage
 
@@ -36,9 +38,12 @@ Hotkeys:
 | Action | Shortcut |
 | --- | --- |
 | Capture HDR screenshot | `Ctrl+PrtScn` |
+| Capture active window | `Ctrl+Alt+PrtScn` |
 | Show or hide stream mirror | `Ctrl+Alt+H` |
 
-For Discord screen share, share the `HDR Corrector Stream Mirror` window instead of sharing the HDR monitor directly.
+For Discord screen share, share the `HDR Corrector Stream Mirror` window instead of sharing the HDR monitor directly. The audio relay starts with the mirror by default and republishes desktop audio from HDR Corrector's own process so Discord has an application audio source to capture.
+
+If you hear local echo or doubled audio, right-click the tray icon and uncheck **Relay desktop audio with mirror**. You can also lower or mute **HDR Corrector Stream Audio** in the Windows volume mixer if Discord still receives the stream audio on your setup.
 
 Screenshots are saved under:
 
@@ -63,9 +68,10 @@ If the receiving service only accepts SDR video, a local utility cannot force tr
 HDR Corrector keeps the pipeline small and local:
 
 1. It captures the selected monitor with Windows Graphics Capture using `R16G16B16A16_FLOAT`, which preserves the HDR desktop as scRGB half-float pixels.
-2. For screenshots, it saves the original HDR frame as `.jxr`, then tone maps the same frame into an SDR `.preview.png`.
+2. For screenshots, it captures either the selected monitor or the active window, saves the original HDR frame as `.jxr`, then tone maps the same frame into an SDR `.preview.png`.
 3. The SDR preview is copied to the clipboard in multiple formats: Windows bitmap formats, encoded PNG formats, and a file-drop reference to the saved preview PNG for apps that prefer pasted files.
 4. For live sharing, it renders the HDR capture stream into a separate D3D11 mirror window with GPU tone mapping. Apps such as Discord can share that window instead of capturing the HDR monitor directly.
+5. When the audio relay is enabled, it uses WASAPI process loopback to capture desktop audio while excluding HDR Corrector's own process, then renders that audio from an HDR Corrector audio session. This gives application-based stream capture a matching audio source without a driver or Discord injection.
 
 ## Design
 
@@ -187,6 +193,7 @@ Security issues should follow [SECURITY.md](SECURITY.md).
 - Screenshots are saved as HDR `.jxr` files because PNG is not an HDR desktop screenshot format.
 - The clipboard receives a paste-friendly DIB/DIBV5 tone-mapped preview because the standard Windows bitmap clipboard path is SDR.
 - For Discord, share the `HDR Corrector Stream Mirror` window. Sharing the HDR monitor directly still uses Discord's own capture path.
+- The audio relay is best-effort because Discord ultimately decides which application audio sessions it captures. It is intentionally easy to disable from the tray menu if a setup produces local echo.
 
 ## License
 

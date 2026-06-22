@@ -96,6 +96,7 @@ $compileSuffix = $sourceArguments + @(
     "shell32.lib",
     "ole32.lib",
     "oleaut32.lib",
+    "mmdevapi.lib",
     "uuid.lib",
     "windowscodecs.lib",
     "advapi32.lib",
