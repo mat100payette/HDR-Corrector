@@ -4,6 +4,7 @@
 #include "audio_relay.h"
 #include "clipboard.h"
 #include "platform.h"
+#include "resource.h"
 
 #include <windows.h>
 #include <shellapi.h>
@@ -697,6 +698,8 @@ private:
         hiddenClass.hInstance = instance_;
         hiddenClass.lpszClassName = kHiddenWindowClass;
         hiddenClass.hCursor = LoadCursorW(nullptr, IDC_ARROW);
+        hiddenClass.hIcon = AppIcon();
+        hiddenClass.hIconSm = AppSmallIcon();
 
         if (!RegisterClassExW(&hiddenClass)) {
             Log(L"RegisterClassExW hidden failed: " + LastErrorMessage(GetLastError()));
@@ -710,6 +713,8 @@ private:
         mirrorClass.lpszClassName = kMirrorWindowClass;
         mirrorClass.hCursor = LoadCursorW(nullptr, IDC_ARROW);
         mirrorClass.hbrBackground = reinterpret_cast<HBRUSH>(GetStockObject(BLACK_BRUSH));
+        mirrorClass.hIcon = AppIcon();
+        mirrorClass.hIconSm = AppSmallIcon();
 
         if (!RegisterClassExW(&mirrorClass)) {
             Log(L"RegisterClassExW mirror failed: " + LastErrorMessage(GetLastError()));
@@ -717,6 +722,22 @@ private:
         }
 
         return true;
+    }
+
+    HICON AppIcon() const {
+        HICON icon = LoadIconW(instance_, MAKEINTRESOURCEW(IDI_APP_ICON));
+        return icon ? icon : LoadIconW(nullptr, IDI_APPLICATION);
+    }
+
+    HICON AppSmallIcon() const {
+        HICON icon = reinterpret_cast<HICON>(LoadImageW(
+            instance_,
+            MAKEINTRESOURCEW(IDI_APP_ICON),
+            IMAGE_ICON,
+            GetSystemMetrics(SM_CXSMICON),
+            GetSystemMetrics(SM_CYSMICON),
+            LR_SHARED));
+        return icon ? icon : LoadIconW(nullptr, IDI_APPLICATION);
     }
 
     bool InitializeD3D() {
@@ -889,7 +910,7 @@ private:
         data.uID = kTrayIconId;
         data.uFlags = NIF_MESSAGE | NIF_ICON | NIF_TIP;
         data.uCallbackMessage = kTrayMessage;
-        data.hIcon = LoadIconW(nullptr, IDI_APPLICATION);
+        data.hIcon = AppSmallIcon();
         CopyTruncated(data.szTip, TrayTooltip());
 
         Shell_NotifyIconW(NIM_ADD, &data);
