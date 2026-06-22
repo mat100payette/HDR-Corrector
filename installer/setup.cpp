@@ -43,6 +43,10 @@ constexpr UINT kInstallCompleteMessage = WM_APP + 2;
 constexpr UINT kInstallProgressMessage = WM_APP + 3;
 constexpr int kPrimaryButtonId = 1;
 constexpr int kCloseButtonId = 2;
+constexpr UINT_PTR kSetupButtonSubclassId = 1;
+constexpr UINT kOwnerDrawHotState = 0x0040;
+constexpr wchar_t kButtonHotProp[] = L"HDRCorrectorSetupButtonHot";
+constexpr wchar_t kButtonTrackingProp[] = L"HDRCorrectorSetupButtonTracking";
 
 HINSTANCE gInstance = nullptr;
 HWND gMainWindow = nullptr;
@@ -69,9 +73,11 @@ struct SetupTheme {
     COLORREF text = RGB(20, 28, 38);
     COLORREF mutedText = RGB(86, 99, 115);
     COLORREF accent = RGB(24, 201, 190);
+    COLORREF accentHover = RGB(41, 218, 207);
     COLORREF accentPressed = RGB(15, 154, 148);
     COLORREF primaryText = RGB(4, 28, 33);
     COLORREF secondaryButton = RGB(235, 240, 246);
+    COLORREF secondaryHover = RGB(225, 234, 244);
     COLORREF secondaryPressed = RGB(222, 229, 238);
     COLORREF progressTrack = RGB(226, 233, 241);
 };
@@ -180,9 +186,11 @@ void InitializeTheme() {
         gTheme.text = RGB(241, 246, 252);
         gTheme.mutedText = RGB(164, 176, 190);
         gTheme.accent = RGB(35, 221, 205);
+        gTheme.accentHover = RGB(63, 235, 222);
         gTheme.accentPressed = RGB(24, 177, 168);
         gTheme.primaryText = RGB(4, 23, 28);
         gTheme.secondaryButton = RGB(34, 44, 58);
+        gTheme.secondaryHover = RGB(45, 57, 73);
         gTheme.secondaryPressed = RGB(47, 59, 76);
         gTheme.progressTrack = RGB(40, 50, 65);
     }
@@ -263,16 +271,106 @@ void SetInstallProgress(HWND window, int value) {
     InvalidateRect(window, &progress, FALSE);
 }
 
+bool IsButtonHot(HWND button) {
+    return GetPropW(button, kButtonHotProp) != nullptr;
+}
+
+void SetButtonHot(HWND button, bool hot) {
+    if (IsButtonHot(button) == hot) {
+        return;
+    }
+
+    if (hot) {
+        SetPropW(button, kButtonHotProp, reinterpret_cast<HANDLE>(static_cast<INT_PTR>(1)));
+    } else {
+        RemovePropW(button, kButtonHotProp);
+    }
+    InvalidateRect(button, nullptr, FALSE);
+}
+
+bool IsTrackingButtonLeave(HWND button) {
+    return GetPropW(button, kButtonTrackingProp) != nullptr;
+}
+
+void SetTrackingButtonLeave(HWND button, bool tracking) {
+    if (tracking) {
+        SetPropW(button, kButtonTrackingProp, reinterpret_cast<HANDLE>(static_cast<INT_PTR>(1)));
+    } else {
+        RemovePropW(button, kButtonTrackingProp);
+    }
+}
+
+void TrackButtonLeave(HWND button) {
+    if (IsTrackingButtonLeave(button)) {
+        return;
+    }
+
+    TRACKMOUSEEVENT event = {sizeof(event), TME_LEAVE, button, 0};
+    if (TrackMouseEvent(&event)) {
+        SetTrackingButtonLeave(button, true);
+    }
+}
+
+void ResetButtonHoverState(HWND button) {
+    SetTrackingButtonLeave(button, false);
+    SetButtonHot(button, false);
+}
+
+LRESULT CALLBACK SetupButtonSubclassProc(HWND button, UINT message, WPARAM wParam, LPARAM lParam, UINT_PTR, DWORD_PTR) {
+    switch (message) {
+    case WM_MOUSEMOVE:
+        if (IsWindowEnabled(button)) {
+            TrackButtonLeave(button);
+            SetButtonHot(button, true);
+        }
+        break;
+    case WM_MOUSELEAVE:
+        ResetButtonHoverState(button);
+        break;
+    case WM_ENABLE:
+        if (!wParam) {
+            ResetButtonHoverState(button);
+        }
+        InvalidateRect(button, nullptr, FALSE);
+        break;
+    case WM_SETFOCUS:
+    case WM_KILLFOCUS:
+    case WM_CAPTURECHANGED:
+        InvalidateRect(button, nullptr, FALSE);
+        break;
+    case WM_LBUTTONDOWN:
+    case WM_LBUTTONUP:
+    case WM_KEYDOWN:
+    case WM_KEYUP: {
+        const LRESULT result = DefSubclassProc(button, message, wParam, lParam);
+        InvalidateRect(button, nullptr, FALSE);
+        return result;
+    }
+    case WM_NCDESTROY:
+        RemovePropW(button, kButtonHotProp);
+        RemovePropW(button, kButtonTrackingProp);
+        RemoveWindowSubclass(button, SetupButtonSubclassProc, kSetupButtonSubclassId);
+        break;
+    default:
+        break;
+    }
+
+    return DefSubclassProc(button, message, wParam, lParam);
+}
+
 void DrawSetupButton(const DRAWITEMSTRUCT& item) {
     HDC dc = item.hDC;
     const bool primary = item.CtlID == kPrimaryButtonId;
     const bool disabled = (item.itemState & ODS_DISABLED) != 0;
     const bool pressed = (item.itemState & ODS_SELECTED) != 0;
     const bool focused = (item.itemState & ODS_FOCUS) != 0;
+    const bool hot = !disabled && (((item.itemState & kOwnerDrawHotState) != 0) || IsButtonHot(item.hwndItem));
 
     COLORREF fill = primary ? gTheme.accent : gTheme.secondaryButton;
     if (pressed) {
         fill = primary ? gTheme.accentPressed : gTheme.secondaryPressed;
+    } else if (hot) {
+        fill = primary ? gTheme.accentHover : gTheme.secondaryHover;
     }
     if (disabled) {
         fill = gTheme.progressTrack;
@@ -288,12 +386,19 @@ void DrawSetupButton(const DRAWITEMSTRUCT& item) {
     FillRect(dc, &rect, parentBrush);
     DeleteObject(parentBrush);
 
-    FillRoundRect(dc, rect, Scale(10), fill);
-    if (!primary) {
-        StrokeRoundRect(dc, rect, Scale(10), gTheme.panelBorder);
+    RECT buttonRect = rect;
+    if (pressed && !disabled) {
+        OffsetRect(&buttonRect, 0, Scale(1));
+    }
+
+    FillRoundRect(dc, buttonRect, Scale(10), fill);
+    if (hot && !disabled) {
+        StrokeRoundRect(dc, buttonRect, Scale(10), primary ? gTheme.accentPressed : gTheme.accent);
+    } else if (!primary) {
+        StrokeRoundRect(dc, buttonRect, Scale(10), gTheme.panelBorder);
     }
     if (focused) {
-        RECT focus = rect;
+        RECT focus = buttonRect;
         InflateRect(&focus, -Scale(3), -Scale(3));
         StrokeRoundRect(dc, focus, Scale(8), primary ? gTheme.primaryText : gTheme.accent);
     }
@@ -303,7 +408,7 @@ void DrawSetupButton(const DRAWITEMSTRUCT& item) {
     SetBkMode(dc, TRANSPARENT);
     SetTextColor(dc, text);
     HFONT oldFont = static_cast<HFONT>(SelectObject(dc, gBodyFont));
-    DrawTextW(dc, label, -1, &rect, DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+    DrawTextW(dc, label, -1, &buttonRect, DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
     SelectObject(dc, oldFont);
 }
 
@@ -684,6 +789,7 @@ HWND CreateButton(HWND parent, int id, const wchar_t* text, int x, int y, int wi
         gInstance,
         nullptr);
     SetControlFont(button, gBodyFont);
+    SetWindowSubclass(button, SetupButtonSubclassProc, kSetupButtonSubclassId, 0);
     return button;
 }
 
@@ -702,6 +808,7 @@ HWND CreateButtonInRect(HWND parent, int id, const wchar_t* text, const RECT& re
         gInstance,
         nullptr);
     SetControlFont(button, gBodyFont);
+    SetWindowSubclass(button, SetupButtonSubclassProc, kSetupButtonSubclassId, 0);
     return button;
 }
 
