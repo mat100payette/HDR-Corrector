@@ -538,24 +538,16 @@ TempFiles ExtractEmbeddedPackage() {
     return files;
 }
 
-void TrustCertificateForCurrentUser(const TempFiles& files) {
-    if (files.certificatePath.empty()) {
-        return;
-    }
-
-    const ResourceBytes certificate = FindResourceBytes(IDR_SETUP_CERTIFICATE);
-    if (!certificate.data) {
-        return;
-    }
-
+void AddCertificateToCurrentUserStore(const ResourceBytes& certificate, const wchar_t* storeName, const wchar_t* displayName) {
     HCERTSTORE store = CertOpenStore(
         CERT_STORE_PROV_SYSTEM_W,
         0,
         0,
         CERT_SYSTEM_STORE_CURRENT_USER,
-        L"TrustedPeople");
+        storeName);
     if (!store) {
-        ThrowWindowsError(L"Could not open the current user's Trusted People certificate store");
+        const std::wstring action = std::wstring(L"Could not open the current user's ") + displayName + L" certificate store";
+        ThrowWindowsError(action.c_str());
     }
 
     const BOOL ok = CertAddEncodedCertificateToStore(
@@ -569,8 +561,24 @@ void TrustCertificateForCurrentUser(const TempFiles& files) {
     CertCloseStore(store, 0);
 
     if (!ok) {
-        ThrowWindowsError(L"Could not trust the local package signing certificate", error);
+        const std::wstring action = std::wstring(L"Could not add the local package signing certificate to the current user's ") + displayName + L" certificate store";
+        ThrowWindowsError(action.c_str(), error);
     }
+}
+
+void TrustCertificateForCurrentUser(const TempFiles& files) {
+    if (files.certificatePath.empty()) {
+        return;
+    }
+
+    const ResourceBytes certificate = FindResourceBytes(IDR_SETUP_CERTIFICATE);
+    if (!certificate.data) {
+        return;
+    }
+
+    // MSIX validation needs a trusted chain root and a trusted package publisher.
+    AddCertificateToCurrentUserStore(certificate, L"Root", L"Trusted Root");
+    AddCertificateToCurrentUserStore(certificate, L"TrustedPeople", L"Trusted People");
 }
 
 std::wstring FileUriFromPath(const std::wstring& path) {

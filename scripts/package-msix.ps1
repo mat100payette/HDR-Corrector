@@ -217,6 +217,7 @@ if (!(Test-Path -LiteralPath `$package)) {
 
 if (Test-Path -LiteralPath `$certificate) {
     Write-Host "Trusting HDR Corrector's local signing certificate for the current user..."
+    Import-Certificate -FilePath `$certificate -CertStoreLocation Cert:\CurrentUser\Root | Out-Null
     Import-Certificate -FilePath `$certificate -CertStoreLocation Cert:\CurrentUser\TrustedPeople | Out-Null
 }
 

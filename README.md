@@ -148,7 +148,7 @@ artifacts\HDRCorrector-v0.1.0-win-x64-symbols.zip
 artifacts\SHA256SUMS.txt
 ```
 
-The setup exe embeds the MSIX package. If the build uses the local self-signed MSIX certificate, the installer trusts that certificate for the current Windows user before installing.
+The setup exe embeds the MSIX package. If the build uses the local self-signed MSIX certificate, the installer trusts that certificate in the current user's Windows certificate stores before installing.
 
 Create only local MSIX artifacts:
 
