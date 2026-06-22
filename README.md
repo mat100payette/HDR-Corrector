@@ -187,7 +187,9 @@ Version bump examples:
 
 ## Code signing
 
-Unsigned Windows executables can show SmartScreen warnings. The release workflow works without a signing certificate, but it will automatically sign the app and setup exe before packaging if these repository secrets are configured:
+Unsigned Windows executables can show SmartScreen warnings. The release workflow works without a signing certificate, but avoiding those warnings for public users requires a trusted code-signing certificate. A self-signed certificate is useful for packaging, but it does not build SmartScreen trust.
+
+The workflow automatically signs the app and setup exe before packaging if these repository secrets are configured:
 
 ```text
 WINDOWS_SIGNING_CERT_PFX_BASE64
@@ -205,6 +207,8 @@ Local signed packaging is also supported:
 ```powershell
 .\scripts\package.ps1 -Version 0.1.0 -Clean -SignPfxPath C:\path\to\certificate.pfx -SignPfxPassword "pfx-password"
 ```
+
+An OV code-signing certificate can still need time to build reputation. An EV code-signing certificate or Microsoft Store distribution is the cleaner route when you want the first downloads to avoid the "unrecognized app" warning.
 
 ## Contributing
 

@@ -58,6 +58,7 @@ HBRUSH gPanelBrush = nullptr;
 std::atomic_bool gInstalling = false;
 bool gSetupCompleted = false;
 int gInstallProgress = 0;
+UINT gDpi = 96;
 std::wstring gInstalledAppUserModelId;
 
 struct SetupTheme {
@@ -76,6 +77,23 @@ struct SetupTheme {
 };
 
 SetupTheme gTheme;
+
+struct SetupLayout {
+    int clientWidth = 530;
+    int clientHeight = 430;
+    RECT title = {};
+    RECT subtitle = {};
+    RECT panel = {};
+    RECT section = {};
+    RECT summary = {};
+    RECT status = {};
+    RECT details = {};
+    RECT progress = {};
+    RECT primaryButton = {};
+    RECT closeButton = {};
+};
+
+SetupLayout gLayout;
 
 struct ResourceBytes {
     const BYTE* data = nullptr;
@@ -104,8 +122,39 @@ struct TempFiles {
     }
 };
 
+int Scale(int value) {
+    return MulDiv(value, static_cast<int>(gDpi), 96);
+}
+
+RECT RectFromDip(int x, int y, int width, int height) {
+    return {Scale(x), Scale(y), Scale(x + width), Scale(y + height)};
+}
+
 RECT ProgressRect() {
-    return {30, 326, 500, 336};
+    return gLayout.progress;
+}
+
+int MeasureTextHeight(HWND window, const wchar_t* text, int width, HFONT font, UINT format = DT_LEFT | DT_WORDBREAK) {
+    HDC dc = GetDC(window);
+    HFONT oldFont = static_cast<HFONT>(SelectObject(dc, font));
+    RECT rect = {0, 0, width, 0};
+    DrawTextW(dc, text, -1, &rect, format | DT_CALCRECT);
+    SelectObject(dc, oldFont);
+    ReleaseDC(window, dc);
+    return rect.bottom - rect.top;
+}
+
+void ResizeWindowToClient(HWND window, int clientWidth, int clientHeight) {
+    const DWORD style = static_cast<DWORD>(GetWindowLongPtrW(window, GWL_STYLE));
+    const DWORD exStyle = static_cast<DWORD>(GetWindowLongPtrW(window, GWL_EXSTYLE));
+    RECT windowRect = {0, 0, clientWidth, clientHeight};
+    AdjustWindowRectExForDpi(&windowRect, style, FALSE, exStyle, gDpi);
+
+    const int windowWidth = windowRect.right - windowRect.left;
+    const int windowHeight = windowRect.bottom - windowRect.top;
+    const int x = (GetSystemMetrics(SM_CXSCREEN) - windowWidth) / 2;
+    const int y = (GetSystemMetrics(SM_CYSCREEN) - windowHeight) / 2;
+    SetWindowPos(window, nullptr, x, y, windowWidth, windowHeight, SWP_NOZORDER | SWP_NOACTIVATE);
 }
 
 bool WindowsAppsUseLightTheme() {
@@ -183,28 +232,28 @@ void DrawSetupBackground(HWND window, HDC dc) {
     FillRect(dc, &client, gBackgroundBrush);
 
     RECT accent = {0, 0, client.right, 4};
+    accent.bottom = Scale(4);
     HBRUSH accentBrush = CreateSolidBrush(gTheme.accent);
     FillRect(dc, &accent, accentBrush);
     DeleteObject(accentBrush);
 
     HICON icon = LoadIconW(gInstance, MAKEINTRESOURCEW(IDI_SETUP_ICON));
     if (icon) {
-        DrawIconEx(dc, 30, 28, icon, 48, 48, 0, nullptr, DI_NORMAL);
+        DrawIconEx(dc, Scale(30), Scale(28), icon, Scale(48), Scale(48), 0, nullptr, DI_NORMAL);
     }
 
-    RECT panel = {28, 124, 502, 342};
-    FillRoundRect(dc, panel, 18, gTheme.panel);
-    StrokeRoundRect(dc, panel, 18, gTheme.panelBorder);
+    FillRoundRect(dc, gLayout.panel, Scale(18), gTheme.panel);
+    StrokeRoundRect(dc, gLayout.panel, Scale(18), gTheme.panelBorder);
 
     RECT progress = ProgressRect();
-    FillRoundRect(dc, progress, 8, gTheme.progressTrack);
+    FillRoundRect(dc, progress, Scale(8), gTheme.progressTrack);
     if (gInstallProgress > 0) {
         RECT filled = progress;
         filled.right = filled.left + MulDiv(progress.right - progress.left, gInstallProgress, 100);
-        if (filled.right - filled.left < 8) {
-            filled.right = filled.left + 8;
+        if (filled.right - filled.left < Scale(8)) {
+            filled.right = filled.left + Scale(8);
         }
-        FillRoundRect(dc, filled, 8, gTheme.accent);
+        FillRoundRect(dc, filled, Scale(8), gTheme.accent);
     }
 }
 
@@ -235,14 +284,18 @@ void DrawSetupButton(const DRAWITEMSTRUCT& item) {
     }
 
     RECT rect = item.rcItem;
-    FillRoundRect(dc, rect, 10, fill);
+    HBRUSH parentBrush = CreateSolidBrush(gTheme.background);
+    FillRect(dc, &rect, parentBrush);
+    DeleteObject(parentBrush);
+
+    FillRoundRect(dc, rect, Scale(10), fill);
     if (!primary) {
-        StrokeRoundRect(dc, rect, 10, gTheme.panelBorder);
+        StrokeRoundRect(dc, rect, Scale(10), gTheme.panelBorder);
     }
     if (focused) {
         RECT focus = rect;
-        InflateRect(&focus, -3, -3);
-        StrokeRoundRect(dc, focus, 8, primary ? gTheme.primaryText : gTheme.accent);
+        InflateRect(&focus, -Scale(3), -Scale(3));
+        StrokeRoundRect(dc, focus, Scale(8), primary ? gTheme.primaryText : gTheme.accent);
     }
 
     wchar_t label[128] = {};
@@ -580,10 +633,31 @@ HWND CreateLabel(HWND parent, const wchar_t* text, int x, int y, int width, int 
         L"STATIC",
         text,
         WS_CHILD | WS_VISIBLE | extraStyle,
-        x,
-        y,
-        width,
-        height,
+        Scale(x),
+        Scale(y),
+        Scale(width),
+        Scale(height),
+        parent,
+        nullptr,
+        gInstance,
+        nullptr);
+    SetControlFont(label, font);
+    if (panelLabel) {
+        SetPropW(label, L"HDRCorrectorSetupPanelLabel", reinterpret_cast<HANDLE>(1));
+    }
+    return label;
+}
+
+HWND CreateLabelInRect(HWND parent, const wchar_t* text, const RECT& rect, HFONT font, DWORD extraStyle = 0, bool panelLabel = false) {
+    HWND label = CreateWindowExW(
+        0,
+        L"STATIC",
+        text,
+        WS_CHILD | WS_VISIBLE | extraStyle,
+        rect.left,
+        rect.top,
+        rect.right - rect.left,
+        rect.bottom - rect.top,
         parent,
         nullptr,
         gInstance,
@@ -601,16 +675,84 @@ HWND CreateButton(HWND parent, int id, const wchar_t* text, int x, int y, int wi
         L"BUTTON",
         text,
         WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_PUSHBUTTON | BS_OWNERDRAW,
-        x,
-        y,
-        width,
-        height,
+        Scale(x),
+        Scale(y),
+        Scale(width),
+        Scale(height),
         parent,
         reinterpret_cast<HMENU>(static_cast<INT_PTR>(id)),
         gInstance,
         nullptr);
     SetControlFont(button, gBodyFont);
     return button;
+}
+
+HWND CreateButtonInRect(HWND parent, int id, const wchar_t* text, const RECT& rect) {
+    HWND button = CreateWindowExW(
+        0,
+        L"BUTTON",
+        text,
+        WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_PUSHBUTTON | BS_OWNERDRAW,
+        rect.left,
+        rect.top,
+        rect.right - rect.left,
+        rect.bottom - rect.top,
+        parent,
+        reinterpret_cast<HMENU>(static_cast<INT_PTR>(id)),
+        gInstance,
+        nullptr);
+    SetControlFont(button, gBodyFont);
+    return button;
+}
+
+void ComputeLayout(HWND window) {
+    gLayout.clientWidth = Scale(560);
+
+    gLayout.title = RectFromDip(92, 24, 420, 38);
+    const wchar_t* subtitle = L"Install the packaged build for clean updates and borderless stream capture support.";
+    const int subtitleWidth = gLayout.clientWidth - Scale(124);
+    const int subtitleHeight = MeasureTextHeight(window, subtitle, subtitleWidth, gBodyFont);
+    gLayout.subtitle = {Scale(94), Scale(64), Scale(94) + subtitleWidth, Scale(64) + subtitleHeight};
+
+    const int panelX = Scale(28);
+    const int panelY = max(Scale(126), gLayout.subtitle.bottom + Scale(18));
+    const int panelWidth = gLayout.clientWidth - Scale(56);
+    const int panelTextX = panelX + Scale(18);
+    const int panelTextWidth = panelWidth - Scale(36);
+
+    int y = panelY + Scale(20);
+    const int sectionHeight = MeasureTextHeight(window, L"Setup Includes", panelTextWidth, gSmallFont, DT_LEFT | DT_SINGLELINE);
+    gLayout.section = {panelTextX, y, panelTextX + panelTextWidth, y + sectionHeight};
+    y += sectionHeight + Scale(16);
+
+    const wchar_t* summary =
+        L"Install HDR Corrector for your Windows account.\r\n"
+        L"Trust the included package certificate when this build is self-signed.\r\n"
+        L"Preserve the portable zip as an advanced fallback.";
+    const int summaryHeight = MeasureTextHeight(window, summary, panelTextWidth, gBodyFont);
+    gLayout.summary = {panelTextX, y, panelTextX + panelTextWidth, y + summaryHeight};
+    y += summaryHeight + Scale(22);
+
+    const int statusHeight = MeasureTextHeight(window, L"Ready to install", panelTextWidth, gBodyFont, DT_LEFT | DT_SINGLELINE);
+    gLayout.status = {panelTextX, y, panelTextX + panelTextWidth, y + statusHeight};
+    y += statusHeight + Scale(8);
+
+    const wchar_t* details = L"HDR Corrector will be installed for the current user.";
+    const wchar_t* successDetails = L"HDR Corrector is installed. You can launch it now or close this installer.";
+    const int detailsHeight = max(
+        max(MeasureTextHeight(window, details, panelTextWidth, gBodyFont), MeasureTextHeight(window, successDetails, panelTextWidth, gBodyFont)),
+        Scale(40));
+    gLayout.details = {panelTextX, y, panelTextX + panelTextWidth, y + detailsHeight};
+    y += detailsHeight + Scale(18);
+
+    gLayout.progress = {panelTextX, y, panelTextX + panelTextWidth, y + Scale(10)};
+    y = gLayout.progress.bottom + Scale(18);
+    gLayout.panel = {panelX, panelY, panelX + panelWidth, y};
+
+    const int buttonTop = gLayout.panel.bottom + Scale(20);
+    gLayout.closeButton = {gLayout.clientWidth - Scale(140), buttonTop, gLayout.clientWidth - Scale(30), buttonTop + Scale(36)};
+    gLayout.primaryButton = {gLayout.closeButton.left - Scale(122), buttonTop, gLayout.closeButton.left - Scale(12), buttonTop + Scale(36)};
+    gLayout.clientHeight = gLayout.closeButton.bottom + Scale(28);
 }
 
 void StartInstall(HWND window) {
@@ -656,46 +798,45 @@ LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wParam, LPARAM lPa
 
         NONCLIENTMETRICSW metrics = {sizeof(metrics)};
         SystemParametersInfoW(SPI_GETNONCLIENTMETRICS, sizeof(metrics), &metrics, 0);
+        metrics.lfMessageFont.lfHeight = -Scale(14);
+        wcscpy_s(metrics.lfMessageFont.lfFaceName, L"Segoe UI");
         gBodyFont = CreateFontIndirectW(&metrics.lfMessageFont);
 
         LOGFONTW titleFont = metrics.lfMessageFont;
-        titleFont.lfHeight = -28;
+        titleFont.lfHeight = -Scale(28);
         titleFont.lfWeight = FW_SEMIBOLD;
         wcscpy_s(titleFont.lfFaceName, L"Segoe UI Variable Display");
         gTitleFont = CreateFontIndirectW(&titleFont);
 
         LOGFONTW smallFont = metrics.lfMessageFont;
-        smallFont.lfHeight = -13;
+        smallFont.lfHeight = -Scale(12);
         wcscpy_s(smallFont.lfFaceName, L"Segoe UI");
         gSmallFont = CreateFontIndirectW(&smallFont);
 
-        CreateLabel(window, L"HDR Corrector Setup", 92, 24, 390, 38, gTitleFont);
-        CreateLabel(
+        ComputeLayout(window);
+        ResizeWindowToClient(window, gLayout.clientWidth, gLayout.clientHeight);
+
+        CreateLabelInRect(window, L"HDR Corrector Setup", gLayout.title, gTitleFont);
+        CreateLabelInRect(
             window,
             L"Install the packaged build for clean updates and borderless stream capture support.",
-            94,
-            64,
-            386,
-            42,
+            gLayout.subtitle,
             gBodyFont,
             SS_LEFT);
-        CreateLabel(window, L"Setup Includes", 46, 144, 180, 22, gSmallFont, 0, true);
-        CreateLabel(
+        CreateLabelInRect(window, L"Setup Includes", gLayout.section, gSmallFont, 0, true);
+        CreateLabelInRect(
             window,
             L"Install HDR Corrector for your Windows account.\r\nTrust the included package certificate when this build is self-signed.\r\nPreserve the portable zip as an advanced fallback.",
-            46,
-            172,
-            426,
-            70,
+            gLayout.summary,
             gBodyFont,
             SS_LEFT,
             true);
 
-        gStatusLabel = CreateLabel(window, L"Ready to install", 46, 252, 426, 22, gBodyFont, 0, true);
-        gDetailsLabel = CreateLabel(window, L"HDR Corrector will be installed for the current user.", 46, 278, 426, 36, gBodyFont, SS_LEFT, true);
+        gStatusLabel = CreateLabelInRect(window, L"Ready to install", gLayout.status, gBodyFont, 0, true);
+        gDetailsLabel = CreateLabelInRect(window, L"HDR Corrector will be installed for the current user.", gLayout.details, gBodyFont, SS_LEFT, true);
 
-        gPrimaryButton = CreateButton(window, kPrimaryButtonId, L"Install", 270, 362, 108, 34);
-        gCloseButton = CreateButton(window, kCloseButtonId, L"Cancel", 390, 362, 100, 34);
+        gPrimaryButton = CreateButtonInRect(window, kPrimaryButtonId, L"Install", gLayout.primaryButton);
+        gCloseButton = CreateButtonInRect(window, kCloseButtonId, L"Cancel", gLayout.closeButton);
         return 0;
     }
     case WM_ERASEBKGND:
@@ -796,6 +937,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
     gInstance = instance;
 
     SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
+    gDpi = GetDpiForSystem();
     InitializeTheme();
 
     INITCOMMONCONTROLSEX controls = {sizeof(controls), ICC_PROGRESS_CLASS};
@@ -824,8 +966,8 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
         return 1;
     }
 
-    RECT windowRect = {0, 0, 530, 430};
-    AdjustWindowRectEx(&windowRect, WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX, FALSE, 0);
+    RECT windowRect = {0, 0, Scale(560), Scale(460)};
+    AdjustWindowRectExForDpi(&windowRect, WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX, FALSE, 0, gDpi);
 
     const int width = windowRect.right - windowRect.left;
     const int height = windowRect.bottom - windowRect.top;
