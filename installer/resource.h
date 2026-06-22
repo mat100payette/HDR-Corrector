@@ -1,0 +1,5 @@
+#pragma once
+
+#define IDI_SETUP_ICON 101
+#define IDR_SETUP_MSIX 201
+#define IDR_SETUP_CERTIFICATE 202

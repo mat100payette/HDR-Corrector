@@ -162,24 +162,10 @@ jobs:
           $tag = "${{ steps.version.outputs.tag }}"
           $assetBase = "HDRCorrector-$tag-win-x64"
           $files = @(
+            "artifacts\$assetBase-setup.exe",
             "artifacts\$assetBase.zip",
             "artifacts\SHA256SUMS.txt"
           )
-
-          $msix = "artifacts\$assetBase.msix"
-          if (Test-Path -LiteralPath $msix) {
-            $files += $msix
-          }
-
-          $msixCert = "artifacts\$assetBase-msix.cer"
-          if (Test-Path -LiteralPath $msixCert) {
-            $files += $msixCert
-          }
-
-          $msixInstallScript = "artifacts\Install-$assetBase-msix.ps1"
-          if (Test-Path -LiteralPath $msixInstallScript) {
-            $files += $msixInstallScript
-          }
 
           $symbols = "artifacts\$assetBase-symbols.zip"
           if (Test-Path -LiteralPath $symbols) {
@@ -187,9 +173,9 @@ jobs:
           }
 
           $notes = @"
-          Portable install: download ``$assetBase.zip``, extract it, and run ``HDRCorrector.exe``.
+          Recommended install: download ``$assetBase-setup.exe`` and run it. The installer guides setup without requiring PowerShell or command-line steps.
 
-          Optional MSIX install: download ``$assetBase.msix``. If ``Install-$assetBase-msix.ps1`` and ``$assetBase-msix.cer`` are present, download them next to the MSIX and run the install script from PowerShell. The MSIX build can request Windows borderless capture consent; the portable build keeps the normal Windows capture border.
+          Portable fallback: download ``$assetBase.zip``, extract it, and run ``HDRCorrector.exe``. The portable build works, but it cannot use the packaged borderless-capture capability.
 
           SHA256 hashes are included in ``SHA256SUMS.txt``.
           "@

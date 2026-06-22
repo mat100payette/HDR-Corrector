@@ -14,17 +14,13 @@ It is built for the common Windows HDR capture problem where screenshots, screen
 
 ## Download
 
-Download the latest `HDRCorrector-vX.Y.Z-win-x64.zip` from [GitHub Releases](https://github.com/mat100payette/HDR-Corrector/releases/latest), extract it, and run `HDRCorrector.exe`.
+Download the latest `HDRCorrector-vX.Y.Z-win-x64-setup.exe` from [GitHub Releases](https://github.com/mat100payette/HDR-Corrector/releases/latest), run it, and follow the installer.
 
 Each release includes `SHA256SUMS.txt` for verifying the downloaded artifacts.
 
-Optional MSIX install:
+The installer is the recommended option. It installs the packaged build for the current Windows user and does not require PowerShell or command-line steps. This packaged build gives HDR Corrector package identity, which lets Windows offer a borderless-capture consent path for the stream mirror.
 
-1. Download `HDRCorrector-vX.Y.Z-win-x64.msix`.
-2. If the release also includes `Install-HDRCorrector-vX.Y.Z-win-x64-msix.ps1` and `HDRCorrector-vX.Y.Z-win-x64-msix.cer`, download all three files into the same folder.
-3. Run the install script in PowerShell.
-
-The portable zip is the simplest option. The MSIX build gives HDR Corrector package identity, which lets Windows offer a borderless-capture consent path for the stream mirror. If the MSIX is signed with a trusted certificate, users can install it directly. If it is self-signed, the install script trusts the included certificate for the current user before installing.
+A portable zip is also available as a fallback for advanced users. It works for screenshots and mirroring, but it cannot use the packaged borderless-capture capability.
 
 ## Features
 
@@ -39,7 +35,7 @@ The portable zip is the simplest option. The MSIX build gives HDR Corrector pack
 
 ## Usage
 
-Run `HDRCorrector.exe`. The app starts in the notification area.
+Install HDR Corrector, then launch it from the installer or the Start menu. The app starts in the notification area.
 
 Hotkeys:
 
@@ -146,13 +142,13 @@ Create local release artifacts:
 Package outputs:
 
 ```text
+artifacts\HDRCorrector-v0.1.0-win-x64-setup.exe
 artifacts\HDRCorrector-v0.1.0-win-x64.zip
 artifacts\HDRCorrector-v0.1.0-win-x64-symbols.zip
-artifacts\HDRCorrector-v0.1.0-win-x64.msix
-artifacts\HDRCorrector-v0.1.0-win-x64-msix.cer
-artifacts\Install-HDRCorrector-v0.1.0-win-x64-msix.ps1
 artifacts\SHA256SUMS.txt
 ```
+
+The setup exe embeds the MSIX package. If the build uses the local self-signed MSIX certificate, the installer trusts that certificate for the current Windows user before installing.
 
 Create only local MSIX artifacts:
 
@@ -168,7 +164,7 @@ artifacts\HDRCorrector-v0.1.0-win-x64-msix.cer
 artifacts\Install-HDRCorrector-v0.1.0-win-x64-msix.ps1
 ```
 
-When no signing certificate is provided, the MSIX script creates a self-signed local package and an install helper script. For a public release with a trusted certificate, pass the same signing inputs used by `package.ps1`.
+When no signing certificate is provided, the MSIX script creates a self-signed local package and an install helper script. The public release workflow wraps that MSIX into the setup exe so users do not need to run the helper script themselves. For a public release with a trusted certificate, pass the same signing inputs used by `package.ps1`.
 
 ## Maintainer Release
 
@@ -179,7 +175,7 @@ The easiest release path is the manual GitHub Actions workflow:
 3. Choose `patch`, `minor`, or `major`.
 4. Run the workflow.
 
-The workflow finds the latest `vX.Y.Z` tag, computes the next version from the selected bump, updates `VERSION`, commits that version bump, creates the new tag, builds on a clean Windows runner, packages the executable, writes SHA256 hashes, and publishes the GitHub Release.
+The workflow finds the latest `vX.Y.Z` tag, computes the next version from the selected bump, updates `VERSION`, commits that version bump, creates the new tag, builds on a clean Windows runner, packages the installer and portable fallback, writes SHA256 hashes, and publishes the GitHub Release.
 
 Version bump examples:
 
@@ -191,7 +187,7 @@ Version bump examples:
 
 ## Code signing
 
-Unsigned Windows executables can show SmartScreen warnings. The release workflow works without a signing certificate, but it will automatically sign the exe before packaging if these repository secrets are configured:
+Unsigned Windows executables can show SmartScreen warnings. The release workflow works without a signing certificate, but it will automatically sign the app and setup exe before packaging if these repository secrets are configured:
 
 ```text
 WINDOWS_SIGNING_CERT_PFX_BASE64

@@ -20,6 +20,6 @@ jobs:
         shell: pwsh
         run: .\scripts\build.ps1 -Configuration Release
 
-      - name: Package MSIX
+      - name: Package installer
         shell: pwsh
-        run: .\scripts\package-msix.ps1 -Version 0.1.0 -SkipBuild -Clean
+        run: .\scripts\package.ps1 -Version 0.1.0 -SkipBuild -Clean -IncludeMsix

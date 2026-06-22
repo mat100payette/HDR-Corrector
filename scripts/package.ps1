@@ -21,6 +21,7 @@ $staging = Join-Path $artifactsRoot $assetBase
 $symbolsStaging = Join-Path $artifactsRoot "$assetBase-symbols"
 $zip = Join-Path $artifactsRoot "$assetBase.zip"
 $symbolsZip = Join-Path $artifactsRoot "$assetBase-symbols.zip"
+$setup = Join-Path $artifactsRoot "$assetBase-setup.exe"
 $msix = Join-Path $artifactsRoot "$assetBase.msix"
 $msixCertificate = Join-Path $artifactsRoot "$assetBase-msix.cer"
 $msixInstallScript = Join-Path $artifactsRoot "Install-$assetBase-msix.ps1"
@@ -65,6 +66,7 @@ if (![string]::IsNullOrWhiteSpace($SignCertificateThumbprint) -or ![string]::IsN
 
 Remove-Item -LiteralPath $staging -Recurse -Force -ErrorAction SilentlyContinue
 Remove-Item -LiteralPath $symbolsStaging -Recurse -Force -ErrorAction SilentlyContinue
+Remove-Item -LiteralPath $setup -Force -ErrorAction SilentlyContinue
 Remove-Item -LiteralPath $zip -Force -ErrorAction SilentlyContinue
 Remove-Item -LiteralPath $symbolsZip -Force -ErrorAction SilentlyContinue
 Remove-Item -LiteralPath $msix -Force -ErrorAction SilentlyContinue
@@ -113,13 +115,27 @@ if ($IncludeMsix) {
     & (Join-Path $PSScriptRoot "package-msix.ps1") @msixArgs
 
     if (Test-Path -LiteralPath $msix) {
-        $checksumTargets += $msix
-    }
-    if (Test-Path -LiteralPath $msixCertificate) {
-        $checksumTargets += $msixCertificate
-    }
-    if (Test-Path -LiteralPath $msixInstallScript) {
-        $checksumTargets += $msixInstallScript
+        $installerArgs = @{
+            Version = $versionInfo.Version
+            MsixPath = $msix
+            OutputPath = $setup
+            TimestampServer = $TimestampServer
+        }
+        if (Test-Path -LiteralPath $msixCertificate) {
+            $installerArgs["CertificatePath"] = $msixCertificate
+        }
+        if (![string]::IsNullOrWhiteSpace($SignCertificateThumbprint)) {
+            $installerArgs["SignCertificateThumbprint"] = $SignCertificateThumbprint
+        }
+        if (![string]::IsNullOrWhiteSpace($SignPfxPath)) {
+            $installerArgs["SignPfxPath"] = $SignPfxPath
+        }
+        if (![string]::IsNullOrWhiteSpace($SignPfxPassword)) {
+            $installerArgs["SignPfxPassword"] = $SignPfxPassword
+        }
+
+        & (Join-Path $PSScriptRoot "build-installer.ps1") @installerArgs
+        $checksumTargets = @($setup) + $checksumTargets
     }
 }
 
@@ -130,17 +146,22 @@ $checksumLines = foreach ($target in $checksumTargets) {
 Set-Content -LiteralPath $checksums -Value $checksumLines
 
 Write-Host "Created release artifacts:"
+if (Test-Path -LiteralPath $setup) {
+    Write-Host "  $setup"
+}
 Write-Host "  $zip"
 if (Test-Path -LiteralPath $symbolsZip) {
     Write-Host "  $symbolsZip"
 }
-if (Test-Path -LiteralPath $msix) {
-    Write-Host "  $msix"
-}
-if (Test-Path -LiteralPath $msixCertificate) {
-    Write-Host "  $msixCertificate"
-}
-if (Test-Path -LiteralPath $msixInstallScript) {
-    Write-Host "  $msixInstallScript"
-}
 Write-Host "  $checksums"
+
+if (Test-Path -LiteralPath $msix) {
+    Write-Host "Created installer staging artifacts:"
+    Write-Host "  $msix"
+    if (Test-Path -LiteralPath $msixCertificate) {
+        Write-Host "  $msixCertificate"
+    }
+    if (Test-Path -LiteralPath $msixInstallScript) {
+        Write-Host "  $msixInstallScript"
+    }
+}
