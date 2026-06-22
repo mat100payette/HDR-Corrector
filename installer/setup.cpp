@@ -538,7 +538,51 @@ TempFiles ExtractEmbeddedPackage() {
     return files;
 }
 
+std::vector<BYTE> CertificateSha1Hash(PCCERT_CONTEXT certificateContext) {
+    DWORD hashSize = 0;
+    if (!CertGetCertificateContextProperty(certificateContext, CERT_SHA1_HASH_PROP_ID, nullptr, &hashSize)) {
+        ThrowWindowsError(L"Could not read the package signing certificate thumbprint");
+    }
+
+    std::vector<BYTE> hash(hashSize);
+    if (!CertGetCertificateContextProperty(certificateContext, CERT_SHA1_HASH_PROP_ID, hash.data(), &hashSize)) {
+        ThrowWindowsError(L"Could not read the package signing certificate thumbprint");
+    }
+    hash.resize(hashSize);
+    return hash;
+}
+
+bool CertificateExistsInStore(HCERTSTORE store, const std::vector<BYTE>& hash, const wchar_t* displayName) {
+    CRYPT_HASH_BLOB hashBlob = {static_cast<DWORD>(hash.size()), const_cast<BYTE*>(hash.data())};
+    PCCERT_CONTEXT existing = CertFindCertificateInStore(
+        store,
+        X509_ASN_ENCODING | PKCS_7_ASN_ENCODING,
+        0,
+        CERT_FIND_SHA1_HASH,
+        &hashBlob,
+        nullptr);
+    if (existing) {
+        CertFreeCertificateContext(existing);
+        return true;
+    }
+
+    const DWORD error = GetLastError();
+    if (error != CRYPT_E_NOT_FOUND) {
+        const std::wstring action = std::wstring(L"Could not search the current user's ") + displayName + L" certificate store";
+        ThrowWindowsError(action.c_str(), error);
+    }
+    return false;
+}
+
 void AddCertificateToCurrentUserStore(const ResourceBytes& certificate, const wchar_t* storeName, const wchar_t* displayName) {
+    PCCERT_CONTEXT certificateContext = CertCreateCertificateContext(
+        X509_ASN_ENCODING | PKCS_7_ASN_ENCODING,
+        certificate.data,
+        certificate.size);
+    if (!certificateContext) {
+        ThrowWindowsError(L"Could not read the embedded package signing certificate");
+    }
+
     HCERTSTORE store = CertOpenStore(
         CERT_STORE_PROV_SYSTEM_W,
         0,
@@ -546,21 +590,29 @@ void AddCertificateToCurrentUserStore(const ResourceBytes& certificate, const wc
         CERT_SYSTEM_STORE_CURRENT_USER,
         storeName);
     if (!store) {
+        const DWORD error = GetLastError();
+        CertFreeCertificateContext(certificateContext);
         const std::wstring action = std::wstring(L"Could not open the current user's ") + displayName + L" certificate store";
-        ThrowWindowsError(action.c_str());
+        ThrowWindowsError(action.c_str(), error);
     }
 
-    const BOOL ok = CertAddEncodedCertificateToStore(
+    const std::vector<BYTE> hash = CertificateSha1Hash(certificateContext);
+    if (CertificateExistsInStore(store, hash, displayName)) {
+        CertCloseStore(store, 0);
+        CertFreeCertificateContext(certificateContext);
+        return;
+    }
+
+    const BOOL ok = CertAddCertificateContextToStore(
         store,
-        X509_ASN_ENCODING | PKCS_7_ASN_ENCODING,
-        certificate.data,
-        certificate.size,
-        CERT_STORE_ADD_REPLACE_EXISTING,
+        certificateContext,
+        CERT_STORE_ADD_NEW,
         nullptr);
     const DWORD error = GetLastError();
     CertCloseStore(store, 0);
+    CertFreeCertificateContext(certificateContext);
 
-    if (!ok) {
+    if (!ok && error != CRYPT_E_EXISTS) {
         const std::wstring action = std::wstring(L"Could not add the local package signing certificate to the current user's ") + displayName + L" certificate store";
         ThrowWindowsError(action.c_str(), error);
     }
@@ -636,7 +688,7 @@ std::wstring InstallMsixPackage(const std::wstring& msixPath, HWND window) {
 
         const auto packageUri = winrt::Windows::Foundation::Uri(FileUriFromPath(msixPath));
         auto dependencies = winrt::single_threaded_vector<winrt::Windows::Foundation::Uri>();
-        const auto options = winrt::Windows::Management::Deployment::DeploymentOptions::ForceTargetApplicationShutdown;
+        const auto options = winrt::Windows::Management::Deployment::DeploymentOptions::ForceApplicationShutdown;
 
         auto operation = existingPackage
             ? manager.UpdatePackageAsync(packageUri, dependencies.GetView(), options)
