@@ -6,6 +6,7 @@
 [![Download](https://img.shields.io/badge/download-latest-2ea44f?style=flat-square)](https://github.com/mat100payette/HDR-Corrector/releases/latest)
 [![Windows 11](https://img.shields.io/badge/platform-Windows%2011-0078D4?logo=windows11&logoColor=white&style=flat-square)](https://github.com/mat100payette/HDR-Corrector/releases/latest)
 [![C++20](https://img.shields.io/badge/C%2B%2B-20-00599C?logo=cplusplus&logoColor=white&style=flat-square)](https://github.com/mat100payette/HDR-Corrector)
+[![License: MIT](https://img.shields.io/badge/license-MIT-green?style=flat-square)](LICENSE)
 
 HDR Corrector is a native Windows 11 tray utility that captures HDR desktop content correctly and produces SDR-friendly screenshots and stream mirrors.
 
@@ -173,6 +174,12 @@ Local signed packaging is also supported:
 .\scripts\package.ps1 -Version 0.1.0 -Clean -SignPfxPath C:\path\to\certificate.pfx -SignPfxPassword "pfx-password"
 ```
 
+## Contributing
+
+Issues and pull requests are welcome. See [CONTRIBUTING.md](CONTRIBUTING.md) for build expectations and project constraints.
+
+Security issues should follow [SECURITY.md](SECURITY.md).
+
 ## Notes
 
 - The monitor HDR state is never changed.
@@ -180,3 +187,7 @@ Local signed packaging is also supported:
 - Screenshots are saved as HDR `.jxr` files because PNG is not an HDR desktop screenshot format.
 - The clipboard receives a paste-friendly DIB/DIBV5 tone-mapped preview because the standard Windows bitmap clipboard path is SDR.
 - For Discord, share the `HDR Corrector Stream Mirror` window. Sharing the HDR monitor directly still uses Discord's own capture path.
+
+## License
+
+HDR Corrector is released under the [MIT License](LICENSE).
