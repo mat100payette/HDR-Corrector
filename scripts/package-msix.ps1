@@ -216,25 +216,23 @@ if (!(Test-Path -LiteralPath `$package)) {
 }
 
 if (Test-Path -LiteralPath `$certificate) {
-    Write-Host "Trusting HDR Corrector's local signing certificate for the current user..."
+    Write-Host "Trusting HDR Corrector's local signing certificate for this machine..."
     `$certificateObject = [System.Security.Cryptography.X509Certificates.X509Certificate2]::new(`$certificate)
     try {
-        foreach (`$storeName in @("Root", "TrustedPeople")) {
-            `$store = [System.Security.Cryptography.X509Certificates.X509Store]::new(
-                `$storeName,
-                [System.Security.Cryptography.X509Certificates.StoreLocation]::CurrentUser)
-            `$store.Open([System.Security.Cryptography.X509Certificates.OpenFlags]::ReadWrite)
-            try {
-                `$existing = `$store.Certificates.Find(
-                    [System.Security.Cryptography.X509Certificates.X509FindType]::FindByThumbprint,
-                    `$certificateObject.Thumbprint,
-                    `$false)
-                if (`$existing.Count -eq 0) {
-                    `$store.Add(`$certificateObject)
-                }
-            } finally {
-                `$store.Close()
+        `$store = [System.Security.Cryptography.X509Certificates.X509Store]::new(
+            "TrustedPeople",
+            [System.Security.Cryptography.X509Certificates.StoreLocation]::LocalMachine)
+        `$store.Open([System.Security.Cryptography.X509Certificates.OpenFlags]::ReadWrite)
+        try {
+            `$existing = `$store.Certificates.Find(
+                [System.Security.Cryptography.X509Certificates.X509FindType]::FindByThumbprint,
+                `$certificateObject.Thumbprint,
+                `$false)
+            if (`$existing.Count -eq 0) {
+                `$store.Add(`$certificateObject)
             }
+        } finally {
+            `$store.Close()
         }
     } finally {
         `$certificateObject.Dispose()

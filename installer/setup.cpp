@@ -45,6 +45,7 @@ constexpr int kPrimaryButtonId = 1;
 constexpr int kCloseButtonId = 2;
 constexpr UINT_PTR kSetupButtonSubclassId = 1;
 constexpr UINT kOwnerDrawHotState = 0x0040;
+constexpr wchar_t kTrustCertificateSwitch[] = L"--trust-package-certificate";
 constexpr wchar_t kButtonHotProp[] = L"HDRCorrectorSetupButtonHot";
 constexpr wchar_t kButtonTrackingProp[] = L"HDRCorrectorSetupButtonTracking";
 
@@ -568,13 +569,13 @@ bool CertificateExistsInStore(HCERTSTORE store, const std::vector<BYTE>& hash, c
 
     const DWORD error = GetLastError();
     if (error != CRYPT_E_NOT_FOUND) {
-        const std::wstring action = std::wstring(L"Could not search the current user's ") + displayName + L" certificate store";
+        const std::wstring action = std::wstring(L"Could not search the ") + displayName + L" certificate store";
         ThrowWindowsError(action.c_str(), error);
     }
     return false;
 }
 
-void AddCertificateToCurrentUserStore(const ResourceBytes& certificate, const wchar_t* storeName, const wchar_t* displayName) {
+PCCERT_CONTEXT CreateEmbeddedCertificateContext(const ResourceBytes& certificate) {
     PCCERT_CONTEXT certificateContext = CertCreateCertificateContext(
         X509_ASN_ENCODING | PKCS_7_ASN_ENCODING,
         certificate.data,
@@ -582,19 +583,37 @@ void AddCertificateToCurrentUserStore(const ResourceBytes& certificate, const wc
     if (!certificateContext) {
         ThrowWindowsError(L"Could not read the embedded package signing certificate");
     }
+    return certificateContext;
+}
 
+HCERTSTORE OpenSystemCertificateStore(DWORD location, const wchar_t* storeName, const wchar_t* displayName) {
     HCERTSTORE store = CertOpenStore(
         CERT_STORE_PROV_SYSTEM_W,
         0,
         0,
-        CERT_SYSTEM_STORE_CURRENT_USER,
+        location,
         storeName);
     if (!store) {
-        const DWORD error = GetLastError();
-        CertFreeCertificateContext(certificateContext);
-        const std::wstring action = std::wstring(L"Could not open the current user's ") + displayName + L" certificate store";
-        ThrowWindowsError(action.c_str(), error);
+        const std::wstring action = std::wstring(L"Could not open the ") + displayName + L" certificate store";
+        ThrowWindowsError(action.c_str());
     }
+    return store;
+}
+
+bool CertificateExistsInSystemStore(const ResourceBytes& certificate, DWORD location, const wchar_t* storeName, const wchar_t* displayName) {
+    PCCERT_CONTEXT certificateContext = CreateEmbeddedCertificateContext(certificate);
+    HCERTSTORE store = OpenSystemCertificateStore(location, storeName, displayName);
+
+    const std::vector<BYTE> hash = CertificateSha1Hash(certificateContext);
+    const bool exists = CertificateExistsInStore(store, hash, displayName);
+    CertCloseStore(store, 0);
+    CertFreeCertificateContext(certificateContext);
+    return exists;
+}
+
+void AddCertificateToSystemStore(const ResourceBytes& certificate, DWORD location, const wchar_t* storeName, const wchar_t* displayName) {
+    PCCERT_CONTEXT certificateContext = CreateEmbeddedCertificateContext(certificate);
+    HCERTSTORE store = OpenSystemCertificateStore(location, storeName, displayName);
 
     const std::vector<BYTE> hash = CertificateSha1Hash(certificateContext);
     if (CertificateExistsInStore(store, hash, displayName)) {
@@ -613,24 +632,104 @@ void AddCertificateToCurrentUserStore(const ResourceBytes& certificate, const wc
     CertFreeCertificateContext(certificateContext);
 
     if (!ok && error != CRYPT_E_EXISTS) {
-        const std::wstring action = std::wstring(L"Could not add the local package signing certificate to the current user's ") + displayName + L" certificate store";
+        const std::wstring action = std::wstring(L"Could not add the local package signing certificate to the ") + displayName + L" certificate store";
         ThrowWindowsError(action.c_str(), error);
     }
 }
 
-void TrustCertificateForCurrentUser(const TempFiles& files) {
-    if (files.certificatePath.empty()) {
-        return;
+bool HasCommandLineSwitch(const wchar_t* switchName) {
+    int argumentCount = 0;
+    LPWSTR* arguments = CommandLineToArgvW(GetCommandLineW(), &argumentCount);
+    if (!arguments) {
+        return false;
     }
 
+    bool found = false;
+    for (int index = 1; index < argumentCount; ++index) {
+        if (_wcsicmp(arguments[index], switchName) == 0) {
+            found = true;
+            break;
+        }
+    }
+
+    LocalFree(arguments);
+    return found;
+}
+
+int RunTrustCertificateCommand() {
+    try {
+        const ResourceBytes certificate = FindResourceBytes(IDR_SETUP_CERTIFICATE);
+        if (!certificate.data) {
+            return 0;
+        }
+
+        AddCertificateToSystemStore(
+            certificate,
+            CERT_SYSTEM_STORE_LOCAL_MACHINE,
+            L"TrustedPeople",
+            L"Local Machine Trusted People");
+        return 0;
+    } catch (...) {
+        MessageBoxW(nullptr, ExceptionMessage().c_str(), L"HDR Corrector Setup", MB_ICONERROR | MB_OK);
+        return 1;
+    }
+}
+
+void TrustCertificateWithElevation(HWND owner) {
+    wchar_t executablePath[MAX_PATH] = {};
+    if (!GetModuleFileNameW(nullptr, executablePath, static_cast<DWORD>(std::size(executablePath)))) {
+        ThrowWindowsError(L"Could not locate the setup executable");
+    }
+
+    SHELLEXECUTEINFOW executeInfo = {sizeof(executeInfo)};
+    executeInfo.fMask = SEE_MASK_NOCLOSEPROCESS;
+    executeInfo.hwnd = owner;
+    executeInfo.lpVerb = L"runas";
+    executeInfo.lpFile = executablePath;
+    executeInfo.lpParameters = kTrustCertificateSwitch;
+    executeInfo.nShow = SW_HIDE;
+
+    if (!ShellExecuteExW(&executeInfo)) {
+        const DWORD error = GetLastError();
+        if (error == ERROR_CANCELLED) {
+            throw std::runtime_error("Administrator approval was cancelled. This local self-signed package cannot be installed until its package certificate is trusted.");
+        }
+        ThrowWindowsError(L"Could not request administrator approval to trust the local package certificate", error);
+    }
+
+    WaitForSingleObject(executeInfo.hProcess, INFINITE);
+    DWORD exitCode = 1;
+    GetExitCodeProcess(executeInfo.hProcess, &exitCode);
+    CloseHandle(executeInfo.hProcess);
+
+    if (exitCode != 0) {
+        throw std::runtime_error("The elevated certificate trust step failed. This local self-signed package cannot be installed until its package certificate is trusted.");
+    }
+}
+
+void TrustCertificateForLocalMachine(HWND owner) {
     const ResourceBytes certificate = FindResourceBytes(IDR_SETUP_CERTIFICATE);
     if (!certificate.data) {
         return;
     }
 
-    // MSIX validation needs a trusted chain root and a trusted package publisher.
-    AddCertificateToCurrentUserStore(certificate, L"Root", L"Trusted Root");
-    AddCertificateToCurrentUserStore(certificate, L"TrustedPeople", L"Trusted People");
+    if (CertificateExistsInSystemStore(
+            certificate,
+            CERT_SYSTEM_STORE_LOCAL_MACHINE,
+            L"TrustedPeople",
+            L"Local Machine Trusted People")) {
+        return;
+    }
+
+    TrustCertificateWithElevation(owner);
+
+    if (!CertificateExistsInSystemStore(
+            certificate,
+            CERT_SYSTEM_STORE_LOCAL_MACHINE,
+            L"TrustedPeople",
+            L"Local Machine Trusted People")) {
+        throw std::runtime_error("The package certificate was not found in Local Machine Trusted People after administrator approval.");
+    }
 }
 
 std::wstring FileUriFromPath(const std::wstring& path) {
@@ -762,8 +861,8 @@ void InstallWorker(HWND window) {
         PostStatus(window, L"Preparing installer files...");
         TempFiles files = ExtractEmbeddedPackage();
 
-        PostStatus(window, L"Trusting the package certificate...");
-        TrustCertificateForCurrentUser(files);
+        PostStatus(window, L"Trusting the local package certificate...");
+        TrustCertificateForLocalMachine(window);
 
         PostStatus(window, L"Installing HDR Corrector for this Windows user...");
         gInstalledAppUserModelId = InstallMsixPackage(files.msixPath, window);
@@ -772,7 +871,7 @@ void InstallWorker(HWND window) {
         const std::wstring directInstallError = ExceptionMessage();
         try {
             TempFiles fallbackFiles = ExtractEmbeddedPackage();
-            TrustCertificateForCurrentUser(fallbackFiles);
+            TrustCertificateForLocalMachine(window);
             if (OpenMsixWithWindowsInstaller(fallbackFiles.msixPath)) {
                 fallbackFiles.keepDirectory = true;
                 PostComplete(window, true, L"Windows App Installer opened. Click Install there to finish installing HDR Corrector.");
@@ -894,7 +993,7 @@ void ComputeLayout(HWND window) {
 
     const wchar_t* summary =
         L"Install HDR Corrector for your Windows account.\r\n"
-        L"Trust the included package certificate when this build is self-signed.\r\n"
+        L"Approve Windows trust prompts when this build is self-signed.\r\n"
         L"Preserve the portable zip as an advanced fallback.";
     const int summaryHeight = MeasureTextHeight(window, summary, panelTextWidth, gBodyFont);
     gLayout.summary = {panelTextX, y, panelTextX + panelTextWidth, y + summaryHeight};
@@ -993,7 +1092,7 @@ LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wParam, LPARAM lPa
         CreateLabelInRect(window, L"Setup Includes", gLayout.section, gSmallFont, 0, true);
         CreateLabelInRect(
             window,
-            L"Install HDR Corrector for your Windows account.\r\nTrust the included package certificate when this build is self-signed.\r\nPreserve the portable zip as an advanced fallback.",
+            L"Install HDR Corrector for your Windows account.\r\nApprove Windows trust prompts when this build is self-signed.\r\nPreserve the portable zip as an advanced fallback.",
             gLayout.summary,
             gBodyFont,
             SS_LEFT,
@@ -1102,6 +1201,10 @@ LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wParam, LPARAM lPa
 
 int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
     gInstance = instance;
+
+    if (HasCommandLineSwitch(kTrustCertificateSwitch)) {
+        return RunTrustCertificateCommand();
+    }
 
     SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
     gDpi = GetDpiForSystem();

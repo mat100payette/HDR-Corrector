@@ -148,7 +148,7 @@ artifacts\HDRCorrector-v0.1.0-win-x64-symbols.zip
 artifacts\SHA256SUMS.txt
 ```
 
-The setup exe embeds the MSIX package. If the build uses the local self-signed MSIX certificate, the installer trusts that certificate in the current user's Windows certificate stores before installing.
+The setup exe embeds the MSIX package. If the build uses the local self-signed MSIX certificate, Windows requires that certificate in the Local Machine Trusted People store before the MSIX can install, so users may need to approve Windows security and administrator prompts.
 
 Create only local MSIX artifacts:
 
@@ -164,7 +164,7 @@ artifacts\HDRCorrector-v0.1.0-win-x64-msix.cer
 artifacts\Install-HDRCorrector-v0.1.0-win-x64-msix.ps1
 ```
 
-When no signing certificate is provided, the MSIX script creates a self-signed local package and an install helper script. The public release workflow wraps that MSIX into the setup exe so users do not need to run the helper script themselves. For a public release with a trusted certificate, pass the same signing inputs used by `package.ps1`.
+When no signing certificate is provided, the MSIX script creates a self-signed local package and an install helper script. The public release workflow wraps that MSIX into the setup exe so users do not need to run the helper script themselves. For fewer Windows trust prompts, pass the same trusted signing inputs used by `package.ps1`.
 
 ## Maintainer Release
 
@@ -187,7 +187,7 @@ Version bump examples:
 
 ## Code signing
 
-Unsigned Windows executables can show SmartScreen warnings. The release workflow works without a signing certificate, but avoiding those warnings for public users requires a trusted code-signing certificate. A self-signed certificate is useful for packaging, but it does not build SmartScreen trust.
+Unsigned Windows executables can show SmartScreen warnings. The release workflow works without a trusted signing certificate by using a self-signed package certificate, but users may see Windows security and administrator prompts. A trusted code-signing certificate is optional and mainly improves the install experience by reducing those warnings.
 
 The workflow automatically signs the app and setup exe before packaging if these repository secrets are configured:
 
