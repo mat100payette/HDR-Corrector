@@ -173,7 +173,7 @@ jobs:
           }
 
           $notes = @"
-          Recommended install: download ``$assetBase-setup.exe`` and run it. The installer guides setup without requiring PowerShell or command-line steps.
+          Recommended install: download ``$assetBase-setup.exe`` and run it. The installer guides setup and installs the packaged build.
 
           Portable fallback: download ``$assetBase.zip``, extract it, and run ``HDRCorrector.exe``. The portable build works, but it cannot use the packaged borderless-capture capability.
 

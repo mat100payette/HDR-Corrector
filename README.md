@@ -18,7 +18,7 @@ Download the latest `HDRCorrector-vX.Y.Z-win-x64-setup.exe` from [GitHub Release
 
 Each release includes `SHA256SUMS.txt` for verifying the downloaded artifacts.
 
-The installer is the recommended option. It installs the packaged build for the current Windows user and does not require PowerShell or command-line steps. This packaged build gives HDR Corrector package identity, which lets Windows offer a borderless-capture consent path for the stream mirror.
+The installer is the recommended option. It installs the packaged build for the current Windows user. This packaged build gives HDR Corrector package identity, which lets Windows offer a borderless-capture consent path for the stream mirror.
 
 A portable zip is also available as a fallback for advanced users. It works for screenshots and mirroring, but it cannot use the packaged borderless-capture capability.
 

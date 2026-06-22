@@ -164,8 +164,10 @@ $compile = @(
     "oleaut32.lib",
     "comctl32.lib",
     "crypt32.lib",
+    "dwmapi.lib",
     "shlwapi.lib",
-    "runtimeobject.lib"
+    "runtimeobject.lib",
+    "advapi32.lib"
 ) -join " "
 
 $command = "call `"$vcVars`" >nul && $resourceCompile && $compile"

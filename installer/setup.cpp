@@ -9,6 +9,7 @@
 #include <appmodel.h>
 #include <commctrl.h>
 #include <cryptuiapi.h>
+#include <dwmapi.h>
 #include <shlwapi.h>
 #include <shobjidl.h>
 
@@ -40,19 +41,41 @@ constexpr wchar_t kApplicationId[] = L"HDRCorrector";
 constexpr UINT kInstallStatusMessage = WM_APP + 1;
 constexpr UINT kInstallCompleteMessage = WM_APP + 2;
 constexpr UINT kInstallProgressMessage = WM_APP + 3;
+constexpr int kPrimaryButtonId = 1;
+constexpr int kCloseButtonId = 2;
 
 HINSTANCE gInstance = nullptr;
 HWND gMainWindow = nullptr;
 HWND gStatusLabel = nullptr;
 HWND gDetailsLabel = nullptr;
-HWND gProgress = nullptr;
 HWND gPrimaryButton = nullptr;
 HWND gCloseButton = nullptr;
 HFONT gTitleFont = nullptr;
 HFONT gBodyFont = nullptr;
+HFONT gSmallFont = nullptr;
+HBRUSH gBackgroundBrush = nullptr;
+HBRUSH gPanelBrush = nullptr;
 std::atomic_bool gInstalling = false;
 bool gSetupCompleted = false;
+int gInstallProgress = 0;
 std::wstring gInstalledAppUserModelId;
+
+struct SetupTheme {
+    bool dark = false;
+    COLORREF background = RGB(246, 248, 251);
+    COLORREF panel = RGB(255, 255, 255);
+    COLORREF panelBorder = RGB(218, 225, 233);
+    COLORREF text = RGB(20, 28, 38);
+    COLORREF mutedText = RGB(86, 99, 115);
+    COLORREF accent = RGB(24, 201, 190);
+    COLORREF accentPressed = RGB(15, 154, 148);
+    COLORREF primaryText = RGB(4, 28, 33);
+    COLORREF secondaryButton = RGB(235, 240, 246);
+    COLORREF secondaryPressed = RGB(222, 229, 238);
+    COLORREF progressTrack = RGB(226, 233, 241);
+};
+
+SetupTheme gTheme;
 
 struct ResourceBytes {
     const BYTE* data = nullptr;
@@ -80,6 +103,156 @@ struct TempFiles {
         }
     }
 };
+
+RECT ProgressRect() {
+    return {30, 326, 500, 336};
+}
+
+bool WindowsAppsUseLightTheme() {
+    DWORD value = 1;
+    DWORD size = sizeof(value);
+    const LSTATUS status = RegGetValueW(
+        HKEY_CURRENT_USER,
+        L"Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize",
+        L"AppsUseLightTheme",
+        RRF_RT_REG_DWORD,
+        nullptr,
+        &value,
+        &size);
+    return status != ERROR_SUCCESS || value != 0;
+}
+
+void InitializeTheme() {
+    gTheme.dark = !WindowsAppsUseLightTheme();
+    if (gTheme.dark) {
+        gTheme.background = RGB(13, 18, 26);
+        gTheme.panel = RGB(22, 29, 40);
+        gTheme.panelBorder = RGB(45, 56, 71);
+        gTheme.text = RGB(241, 246, 252);
+        gTheme.mutedText = RGB(164, 176, 190);
+        gTheme.accent = RGB(35, 221, 205);
+        gTheme.accentPressed = RGB(24, 177, 168);
+        gTheme.primaryText = RGB(4, 23, 28);
+        gTheme.secondaryButton = RGB(34, 44, 58);
+        gTheme.secondaryPressed = RGB(47, 59, 76);
+        gTheme.progressTrack = RGB(40, 50, 65);
+    }
+
+    if (gBackgroundBrush) {
+        DeleteObject(gBackgroundBrush);
+    }
+    if (gPanelBrush) {
+        DeleteObject(gPanelBrush);
+    }
+    gBackgroundBrush = CreateSolidBrush(gTheme.background);
+    gPanelBrush = CreateSolidBrush(gTheme.panel);
+}
+
+void ApplyNativeWindowTheme(HWND window) {
+    const BOOL dark = gTheme.dark ? TRUE : FALSE;
+    DwmSetWindowAttribute(window, 20, &dark, sizeof(dark));
+    DwmSetWindowAttribute(window, 19, &dark, sizeof(dark));
+}
+
+void FillRoundRect(HDC dc, const RECT& rect, int radius, COLORREF color) {
+    HBRUSH brush = CreateSolidBrush(color);
+    HPEN pen = CreatePen(PS_SOLID, 1, color);
+    HGDIOBJ oldBrush = SelectObject(dc, brush);
+    HGDIOBJ oldPen = SelectObject(dc, pen);
+    RoundRect(dc, rect.left, rect.top, rect.right, rect.bottom, radius, radius);
+    SelectObject(dc, oldBrush);
+    SelectObject(dc, oldPen);
+    DeleteObject(pen);
+    DeleteObject(brush);
+}
+
+void StrokeRoundRect(HDC dc, const RECT& rect, int radius, COLORREF color) {
+    HBRUSH brush = static_cast<HBRUSH>(GetStockObject(NULL_BRUSH));
+    HPEN pen = CreatePen(PS_SOLID, 1, color);
+    HGDIOBJ oldBrush = SelectObject(dc, brush);
+    HGDIOBJ oldPen = SelectObject(dc, pen);
+    RoundRect(dc, rect.left, rect.top, rect.right, rect.bottom, radius, radius);
+    SelectObject(dc, oldBrush);
+    SelectObject(dc, oldPen);
+    DeleteObject(pen);
+}
+
+void DrawSetupBackground(HWND window, HDC dc) {
+    RECT client = {};
+    GetClientRect(window, &client);
+    FillRect(dc, &client, gBackgroundBrush);
+
+    RECT accent = {0, 0, client.right, 4};
+    HBRUSH accentBrush = CreateSolidBrush(gTheme.accent);
+    FillRect(dc, &accent, accentBrush);
+    DeleteObject(accentBrush);
+
+    HICON icon = LoadIconW(gInstance, MAKEINTRESOURCEW(IDI_SETUP_ICON));
+    if (icon) {
+        DrawIconEx(dc, 30, 28, icon, 48, 48, 0, nullptr, DI_NORMAL);
+    }
+
+    RECT panel = {28, 124, 502, 342};
+    FillRoundRect(dc, panel, 18, gTheme.panel);
+    StrokeRoundRect(dc, panel, 18, gTheme.panelBorder);
+
+    RECT progress = ProgressRect();
+    FillRoundRect(dc, progress, 8, gTheme.progressTrack);
+    if (gInstallProgress > 0) {
+        RECT filled = progress;
+        filled.right = filled.left + MulDiv(progress.right - progress.left, gInstallProgress, 100);
+        if (filled.right - filled.left < 8) {
+            filled.right = filled.left + 8;
+        }
+        FillRoundRect(dc, filled, 8, gTheme.accent);
+    }
+}
+
+void SetInstallProgress(HWND window, int value) {
+    gInstallProgress = max(0, min(100, value));
+    RECT progress = ProgressRect();
+    InvalidateRect(window, &progress, FALSE);
+}
+
+void DrawSetupButton(const DRAWITEMSTRUCT& item) {
+    HDC dc = item.hDC;
+    const bool primary = item.CtlID == kPrimaryButtonId;
+    const bool disabled = (item.itemState & ODS_DISABLED) != 0;
+    const bool pressed = (item.itemState & ODS_SELECTED) != 0;
+    const bool focused = (item.itemState & ODS_FOCUS) != 0;
+
+    COLORREF fill = primary ? gTheme.accent : gTheme.secondaryButton;
+    if (pressed) {
+        fill = primary ? gTheme.accentPressed : gTheme.secondaryPressed;
+    }
+    if (disabled) {
+        fill = gTheme.progressTrack;
+    }
+
+    COLORREF text = primary ? gTheme.primaryText : gTheme.text;
+    if (disabled) {
+        text = gTheme.mutedText;
+    }
+
+    RECT rect = item.rcItem;
+    FillRoundRect(dc, rect, 10, fill);
+    if (!primary) {
+        StrokeRoundRect(dc, rect, 10, gTheme.panelBorder);
+    }
+    if (focused) {
+        RECT focus = rect;
+        InflateRect(&focus, -3, -3);
+        StrokeRoundRect(dc, focus, 8, primary ? gTheme.primaryText : gTheme.accent);
+    }
+
+    wchar_t label[128] = {};
+    GetWindowTextW(item.hwndItem, label, static_cast<int>(std::size(label)));
+    SetBkMode(dc, TRANSPARENT);
+    SetTextColor(dc, text);
+    HFONT oldFont = static_cast<HFONT>(SelectObject(dc, gBodyFont));
+    DrawTextW(dc, label, -1, &rect, DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+    SelectObject(dc, oldFont);
+}
 
 std::wstring FormatHresult(HRESULT result) {
     wchar_t* message = nullptr;
@@ -401,7 +574,7 @@ void SetControlFont(HWND control, HFONT font) {
     SendMessageW(control, WM_SETFONT, reinterpret_cast<WPARAM>(font), TRUE);
 }
 
-HWND CreateLabel(HWND parent, const wchar_t* text, int x, int y, int width, int height, HFONT font, DWORD extraStyle = 0) {
+HWND CreateLabel(HWND parent, const wchar_t* text, int x, int y, int width, int height, HFONT font, DWORD extraStyle = 0, bool panelLabel = false) {
     HWND label = CreateWindowExW(
         0,
         L"STATIC",
@@ -416,6 +589,9 @@ HWND CreateLabel(HWND parent, const wchar_t* text, int x, int y, int width, int 
         gInstance,
         nullptr);
     SetControlFont(label, font);
+    if (panelLabel) {
+        SetPropW(label, L"HDRCorrectorSetupPanelLabel", reinterpret_cast<HANDLE>(1));
+    }
     return label;
 }
 
@@ -424,7 +600,7 @@ HWND CreateButton(HWND parent, int id, const wchar_t* text, int x, int y, int wi
         0,
         L"BUTTON",
         text,
-        WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_PUSHBUTTON,
+        WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_PUSHBUTTON | BS_OWNERDRAW,
         x,
         y,
         width,
@@ -447,8 +623,8 @@ void StartInstall(HWND window) {
     SetWindowTextW(gPrimaryButton, L"Installing...");
     SetWindowTextW(gStatusLabel, L"Starting installer...");
     SetWindowTextW(gDetailsLabel, L"Please keep this window open while setup runs.");
-    SendMessageW(gProgress, PBM_SETRANGE, 0, MAKELPARAM(0, 100));
-    SendMessageW(gProgress, PBM_SETPOS, 0, 0);
+    SetInstallProgress(window, 0);
+    InvalidateRect(gPrimaryButton, nullptr, FALSE);
 
     std::thread(InstallWorker, window).detach();
 }
@@ -456,12 +632,14 @@ void StartInstall(HWND window) {
 void OnInstallComplete(HWND window, bool success, const std::wstring& text) {
     gInstalling = false;
     gSetupCompleted = success;
-    SendMessageW(gProgress, PBM_SETPOS, success ? 100 : 0, 0);
+    SetInstallProgress(window, success ? 100 : 0);
     SetWindowTextW(gStatusLabel, success ? L"Setup complete" : L"Setup failed");
     SetWindowTextW(gDetailsLabel, text.c_str());
     EnableWindow(gPrimaryButton, TRUE);
     SetWindowTextW(gPrimaryButton, success ? (!gInstalledAppUserModelId.empty() ? L"Launch HDR Corrector" : L"Done") : L"Try again");
     SetWindowTextW(gCloseButton, L"Close");
+    InvalidateRect(gPrimaryButton, nullptr, FALSE);
+    InvalidateRect(gCloseButton, nullptr, FALSE);
     if (!success) {
         MessageBoxW(window, text.c_str(), L"HDR Corrector Setup", MB_ICONERROR | MB_OK);
     }
@@ -470,6 +648,8 @@ void OnInstallComplete(HWND window, bool success, const std::wstring& text) {
 LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wParam, LPARAM lParam) {
     switch (message) {
     case WM_CREATE: {
+        ApplyNativeWindowTheme(window);
+
         HICON icon = LoadIconW(gInstance, MAKEINTRESOURCEW(IDI_SETUP_ICON));
         SendMessageW(window, WM_SETICON, ICON_BIG, reinterpret_cast<LPARAM>(icon));
         SendMessageW(window, WM_SETICON, ICON_SMALL, reinterpret_cast<LPARAM>(icon));
@@ -479,55 +659,67 @@ LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wParam, LPARAM lPa
         gBodyFont = CreateFontIndirectW(&metrics.lfMessageFont);
 
         LOGFONTW titleFont = metrics.lfMessageFont;
-        titleFont.lfHeight = -24;
+        titleFont.lfHeight = -28;
         titleFont.lfWeight = FW_SEMIBOLD;
-        wcscpy_s(titleFont.lfFaceName, L"Segoe UI");
+        wcscpy_s(titleFont.lfFaceName, L"Segoe UI Variable Display");
         gTitleFont = CreateFontIndirectW(&titleFont);
 
-        CreateLabel(window, L"HDR Corrector Setup", 28, 24, 460, 36, gTitleFont);
+        LOGFONTW smallFont = metrics.lfMessageFont;
+        smallFont.lfHeight = -13;
+        wcscpy_s(smallFont.lfFaceName, L"Segoe UI");
+        gSmallFont = CreateFontIndirectW(&smallFont);
+
+        CreateLabel(window, L"HDR Corrector Setup", 92, 24, 390, 38, gTitleFont);
         CreateLabel(
             window,
-            L"Installs the packaged version of HDR Corrector so Windows can allow borderless capture for the stream mirror.",
-            30,
-            70,
-            476,
-            44,
+            L"Install the packaged build for clean updates and borderless stream capture support.",
+            94,
+            64,
+            386,
+            42,
             gBodyFont,
             SS_LEFT);
-        CreateLabel(window, L"What setup will do:", 30, 128, 180, 22, gBodyFont);
+        CreateLabel(window, L"Setup Includes", 46, 144, 180, 22, gSmallFont, 0, true);
         CreateLabel(
             window,
-            L"1. Install HDR Corrector for the current Windows user.\r\n2. Trust the included package certificate if this build is self-signed.\r\n3. Keep the portable zip available only as an advanced fallback.",
+            L"Install HDR Corrector for your Windows account.\r\nTrust the included package certificate when this build is self-signed.\r\nPreserve the portable zip as an advanced fallback.",
             46,
-            154,
-            460,
-            66,
+            172,
+            426,
+            70,
             gBodyFont,
-            SS_LEFT);
+            SS_LEFT,
+            true);
 
-        gStatusLabel = CreateLabel(window, L"Ready to install", 30, 238, 460, 22, gBodyFont);
-        gDetailsLabel = CreateLabel(window, L"No command line is required.", 30, 264, 460, 42, gBodyFont, SS_LEFT);
+        gStatusLabel = CreateLabel(window, L"Ready to install", 46, 252, 426, 22, gBodyFont, 0, true);
+        gDetailsLabel = CreateLabel(window, L"HDR Corrector will be installed for the current user.", 46, 278, 426, 36, gBodyFont, SS_LEFT, true);
 
-        gProgress = CreateWindowExW(
-            0,
-            PROGRESS_CLASSW,
-            nullptr,
-            WS_CHILD | WS_VISIBLE,
-            30,
-            318,
-            460,
-            18,
-            window,
-            nullptr,
-            gInstance,
-            nullptr);
-
-        gPrimaryButton = CreateButton(window, 1, L"Install", 274, 360, 104, 32);
-        gCloseButton = CreateButton(window, 2, L"Cancel", 390, 360, 100, 32);
+        gPrimaryButton = CreateButton(window, kPrimaryButtonId, L"Install", 270, 362, 108, 34);
+        gCloseButton = CreateButton(window, kCloseButtonId, L"Cancel", 390, 362, 100, 34);
         return 0;
     }
+    case WM_ERASEBKGND:
+        return 1;
+    case WM_PAINT: {
+        PAINTSTRUCT paint = {};
+        HDC dc = BeginPaint(window, &paint);
+        DrawSetupBackground(window, dc);
+        EndPaint(window, &paint);
+        return 0;
+    }
+    case WM_CTLCOLORSTATIC: {
+        HDC dc = reinterpret_cast<HDC>(wParam);
+        HWND control = reinterpret_cast<HWND>(lParam);
+        SetBkMode(dc, TRANSPARENT);
+        SetTextColor(dc, gTheme.text);
+        return reinterpret_cast<LRESULT>(
+            GetPropW(control, L"HDRCorrectorSetupPanelLabel") ? gPanelBrush : gBackgroundBrush);
+    }
+    case WM_DRAWITEM:
+        DrawSetupButton(*reinterpret_cast<DRAWITEMSTRUCT*>(lParam));
+        return TRUE;
     case WM_COMMAND:
-        if (LOWORD(wParam) == 1) {
+        if (LOWORD(wParam) == kPrimaryButtonId) {
             if (!gInstalling && gSetupCompleted && !gInstalledAppUserModelId.empty()) {
                 try {
                     LaunchInstalledApp();
@@ -542,7 +734,7 @@ LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wParam, LPARAM lPa
             }
             return 0;
         }
-        if (LOWORD(wParam) == 2) {
+        if (LOWORD(wParam) == kCloseButtonId) {
             if (gInstalling) {
                 MessageBoxW(window, L"Setup is still running. Please wait for it to finish.", L"HDR Corrector Setup", MB_ICONINFORMATION | MB_OK);
             } else {
@@ -557,7 +749,7 @@ LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wParam, LPARAM lPa
         return 0;
     }
     case kInstallProgressMessage:
-        SendMessageW(gProgress, PBM_SETPOS, wParam, 0);
+        SetInstallProgress(window, static_cast<int>(wParam));
         return 0;
     case kInstallCompleteMessage: {
         const auto text = std::unique_ptr<std::wstring>(reinterpret_cast<std::wstring*>(lParam));
@@ -578,6 +770,17 @@ LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wParam, LPARAM lPa
         if (gBodyFont) {
             DeleteObject(gBodyFont);
         }
+        if (gSmallFont) {
+            DeleteObject(gSmallFont);
+        }
+        if (gBackgroundBrush) {
+            DeleteObject(gBackgroundBrush);
+            gBackgroundBrush = nullptr;
+        }
+        if (gPanelBrush) {
+            DeleteObject(gPanelBrush);
+            gPanelBrush = nullptr;
+        }
         PostQuitMessage(0);
         return 0;
     default:
@@ -592,17 +795,21 @@ LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wParam, LPARAM lPa
 int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand) {
     gInstance = instance;
 
+    SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
+    InitializeTheme();
+
     INITCOMMONCONTROLSEX controls = {sizeof(controls), ICC_PROGRESS_CLASS};
     InitCommonControlsEx(&controls);
     const HRESULT comInit = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
 
     WNDCLASSEXW windowClass = {};
     windowClass.cbSize = sizeof(windowClass);
+    windowClass.style = CS_HREDRAW | CS_VREDRAW;
     windowClass.lpfnWndProc = WindowProc;
     windowClass.hInstance = instance;
     windowClass.hIcon = LoadIconW(instance, MAKEINTRESOURCEW(IDI_SETUP_ICON));
     windowClass.hCursor = LoadCursorW(nullptr, IDC_ARROW);
-    windowClass.hbrBackground = reinterpret_cast<HBRUSH>(COLOR_WINDOW + 1);
+    windowClass.hbrBackground = gBackgroundBrush;
     windowClass.lpszClassName = kWindowClassName;
     windowClass.hIconSm = LoadIconW(instance, MAKEINTRESOURCEW(IDI_SETUP_ICON));
 
