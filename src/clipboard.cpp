@@ -17,6 +17,18 @@
 
 namespace {
 
+constexpr UINT kBgraBytesPerPixel = 4;
+constexpr WORD kBgraBitsPerPixel = 32;
+constexpr DWORD kDibV5RedMask = 0x00ff0000;
+constexpr DWORD kDibV5GreenMask = 0x0000ff00;
+constexpr DWORD kDibV5BlueMask = 0x000000ff;
+constexpr DWORD kDibV5AlphaMask = 0xff000000;
+constexpr size_t kFileDropTrailingNulls = 2;
+
+constexpr wchar_t kClipboardFormatPreferredDropEffect[] = L"Preferred DropEffect";
+constexpr wchar_t kClipboardFormatPng[] = L"PNG";
+constexpr wchar_t kClipboardFormatImagePng[] = L"image/png";
+
 HGLOBAL DuplicateGlobalMemory(HGLOBAL source) {
     const SIZE_T size = GlobalSize(source);
     if (size == 0) {
@@ -185,7 +197,7 @@ HGLOBAL CreateFileDropData(const std::filesystem::path& path) {
     }
 
     const std::wstring absolutePath = std::filesystem::absolute(path).wstring();
-    const size_t pathCharacters = absolutePath.size() + 2;
+    const size_t pathCharacters = absolutePath.size() + kFileDropTrailingNulls;
     const size_t totalBytes = sizeof(DROPFILES) + pathCharacters * sizeof(wchar_t);
 
     HGLOBAL memory = GlobalAlloc(GMEM_MOVEABLE | GMEM_ZEROINIT, totalBytes);
@@ -235,7 +247,7 @@ bool CopyBgraToClipboard(
     const std::vector<uint8_t>& bgra,
     const std::filesystem::path& imageFilePath,
     std::wstring& error) {
-    const size_t pixelBytes = static_cast<size_t>(width) * height * 4;
+    const size_t pixelBytes = static_cast<size_t>(width) * height * kBgraBytesPerPixel;
     if (width == 0 || height == 0 || bgra.size() < pixelBytes) {
         error = L"Invalid clipboard bitmap dimensions.";
         return false;
@@ -259,7 +271,7 @@ bool CopyBgraToClipboard(
         header->biWidth = static_cast<LONG>(width);
         header->biHeight = -static_cast<LONG>(height);
         header->biPlanes = 1;
-        header->biBitCount = 32;
+        header->biBitCount = kBgraBitsPerPixel;
         header->biCompression = BI_RGB;
         header->biSizeImage = static_cast<DWORD>(pixelBytes);
 
@@ -286,13 +298,13 @@ bool CopyBgraToClipboard(
         header->bV5Width = static_cast<LONG>(width);
         header->bV5Height = -static_cast<LONG>(height);
         header->bV5Planes = 1;
-        header->bV5BitCount = 32;
+        header->bV5BitCount = kBgraBitsPerPixel;
         header->bV5Compression = BI_BITFIELDS;
         header->bV5SizeImage = static_cast<DWORD>(pixelBytes);
-        header->bV5RedMask = 0x00ff0000;
-        header->bV5GreenMask = 0x0000ff00;
-        header->bV5BlueMask = 0x000000ff;
-        header->bV5AlphaMask = 0xff000000;
+        header->bV5RedMask = kDibV5RedMask;
+        header->bV5GreenMask = kDibV5GreenMask;
+        header->bV5BlueMask = kDibV5BlueMask;
+        header->bV5AlphaMask = kDibV5AlphaMask;
         header->bV5CSType = LCS_sRGB;
         header->bV5Intent = LCS_GM_IMAGES;
 
@@ -303,7 +315,7 @@ bool CopyBgraToClipboard(
 
     HGLOBAL dib = makeDib();
     HGLOBAL dibV5 = makeDibV5();
-    HGLOBAL png = EncodePngToGlobalMemory(width, height, width * 4, bgra, error);
+    HGLOBAL png = EncodePngToGlobalMemory(width, height, width * kBgraBytesPerPixel, bgra, error);
     HGLOBAL imagePng = png ? DuplicateGlobalMemory(png) : nullptr;
     if (png && !imagePng) {
         Log(L"Could not duplicate PNG clipboard data for image/png format.");
@@ -314,6 +326,8 @@ bool CopyBgraToClipboard(
     HGLOBAL fileDrop = nullptr;
     HGLOBAL dropEffect = nullptr;
     if (!imageFilePath.empty() && std::filesystem::exists(imageFilePath)) {
+        // Discord/Electron can reject image-only clipboard payloads as empty;
+        // CF_HDROP gives them a real PNG file to paste.
         fileDrop = CreateFileDropData(imageFilePath);
         dropEffect = CreatePreferredDropEffectData();
         if (!fileDrop) {
@@ -327,7 +341,7 @@ bool CopyBgraToClipboard(
     bitmapInfo.bmiHeader.biWidth = static_cast<LONG>(width);
     bitmapInfo.bmiHeader.biHeight = -static_cast<LONG>(height);
     bitmapInfo.bmiHeader.biPlanes = 1;
-    bitmapInfo.bmiHeader.biBitCount = 32;
+    bitmapInfo.bmiHeader.biBitCount = kBgraBitsPerPixel;
     bitmapInfo.bmiHeader.biCompression = BI_RGB;
 
     HBITMAP bitmap = CreateDIBSection(nullptr, &bitmapInfo, DIB_RGB_COLORS, &bits, nullptr, 0);
@@ -373,7 +387,7 @@ bool CopyBgraToClipboard(
         }
     }
 
-    const UINT preferredDropEffectFormat = RegisterClipboardFormatW(L"Preferred DropEffect");
+    const UINT preferredDropEffectFormat = RegisterClipboardFormatW(kClipboardFormatPreferredDropEffect);
     if (preferredDropEffectFormat != 0 && dropEffect) {
         if (SetClipboardData(preferredDropEffectFormat, dropEffect)) {
             dropEffect = nullptr;
@@ -382,7 +396,8 @@ bool CopyBgraToClipboard(
         }
     }
 
-    const UINT pngFormat = RegisterClipboardFormatW(L"PNG");
+    // Apps disagree on which registered PNG name they inspect, so publish both common variants.
+    const UINT pngFormat = RegisterClipboardFormatW(kClipboardFormatPng);
     if (pngFormat != 0 && png) {
         if (SetClipboardData(pngFormat, png)) {
             copied = true;
@@ -392,7 +407,7 @@ bool CopyBgraToClipboard(
         }
     }
 
-    const UINT imagePngFormat = RegisterClipboardFormatW(L"image/png");
+    const UINT imagePngFormat = RegisterClipboardFormatW(kClipboardFormatImagePng);
     if (imagePngFormat != 0 && imagePng) {
         if (SetClipboardData(imagePngFormat, imagePng)) {
             copied = true;

@@ -65,6 +65,55 @@ constexpr UINT kCmdExit = 205;
 
 constexpr DXGI_FORMAT kCaptureFormat = DXGI_FORMAT_R16G16B16A16_FLOAT;
 constexpr DirectXPixelFormat kFramePoolFormat = DirectXPixelFormat::R16G16B16A16Float;
+constexpr UINT kFramePoolBufferCount = 2;
+
+constexpr size_t kRegistryValueBufferCharacters = 2048;
+constexpr float kDisplayConfigSdrWhiteLevelBase = 1000.0f;
+
+constexpr int kMirrorInitialWidth = 1280;
+constexpr int kMirrorInitialHeight = 720;
+constexpr int kMirrorInitialOffset = 80;
+constexpr UINT kSwapChainBufferCount = 2;
+constexpr UINT kFullscreenTriangleVertexCount = 3;
+constexpr UINT kPresentSyncInterval = 1;
+constexpr UINT kPresentFlags = 0;
+constexpr float kMirrorWaitingClearColor[4] = {0.02f, 0.02f, 0.02f, 1.0f};
+constexpr float kMirrorFrameClearColor[4] = {0.0f, 0.0f, 0.0f, 1.0f};
+
+constexpr DWORD kExistingCaptureFrameWaitMs = 500;
+constexpr DWORD kNewCaptureFrameWaitMs = 2000;
+
+constexpr UINT kRgbaRedIndex = 0;
+constexpr UINT kRgbaGreenIndex = 1;
+constexpr UINT kRgbaBlueIndex = 2;
+constexpr UINT kBgraBlueIndex = 0;
+constexpr UINT kBgraGreenIndex = 1;
+constexpr UINT kBgraRedIndex = 2;
+constexpr UINT kBgraAlphaIndex = 3;
+constexpr UINT kHalfRgbaChannelCount = 4;
+constexpr UINT kHalfRgbaBytesPerPixel = sizeof(uint16_t) * kHalfRgbaChannelCount;
+constexpr UINT kBgraBytesPerPixel = 4;
+constexpr uint8_t kOpaqueAlpha = 255;
+
+constexpr uint32_t kHalfSignMask = 0x8000u;
+constexpr uint32_t kHalfExponentMask = 0x1fu;
+constexpr uint32_t kHalfMantissaMask = 0x03ffu;
+constexpr uint32_t kHalfHiddenMantissaBit = 0x0400u;
+constexpr uint32_t kHalfExponentMax = 31u;
+constexpr int32_t kHalfExponentBias = 15;
+constexpr int32_t kFloatExponentBias = 127;
+constexpr uint32_t kHalfExponentShift = 10;
+constexpr uint32_t kHalfSignToFloatShift = 16;
+constexpr uint32_t kFloatExponentShift = 23;
+constexpr uint32_t kHalfMantissaToFloatShift = 13;
+constexpr uint32_t kFloatInfinityBits = 0x7f800000u;
+
+constexpr float kSrgbLinearThreshold = 0.0031308f;
+constexpr float kSrgbLinearScale = 12.92f;
+constexpr float kSrgbGammaScale = 1.055f;
+constexpr float kSrgbGamma = 2.4f;
+constexpr float kSrgbGammaOffset = 0.055f;
+constexpr float kUint8Max = 255.0f;
 
 const char kFullscreenTriangleShader[] = R"(
 Texture2D<float4> sourceTexture : register(t0);
@@ -75,12 +124,19 @@ cbuffer ToneMapConstants : register(b0) {
     float3 padding;
 };
 
+static const float kSrgbLinearThreshold = 0.0031308;
+static const float kSrgbLinearScale = 12.92;
+static const float kSrgbGammaScale = 1.055;
+static const float kSrgbGamma = 2.4;
+static const float kSrgbGammaOffset = 0.055;
+
 struct VSOut {
     float4 position : SV_POSITION;
     float2 uv : TEXCOORD0;
 };
 
 VSOut VSMain(uint id : SV_VertexID) {
+    // Oversized fullscreen triangle: the off-screen vertices avoid a diagonal seam.
     float2 positions[3] = {
         float2(-1.0, -1.0),
         float2(-1.0,  3.0),
@@ -100,12 +156,12 @@ VSOut VSMain(uint id : SV_VertexID) {
 }
 
 float3 LinearToSrgb(float3 color) {
-    float3 low = color * 12.92;
-    float3 high = 1.055 * pow(color, 1.0 / 2.4) - 0.055;
+    float3 low = color * kSrgbLinearScale;
+    float3 high = kSrgbGammaScale * pow(color, 1.0 / kSrgbGamma) - kSrgbGammaOffset;
     return float3(
-        color.r <= 0.0031308 ? low.r : high.r,
-        color.g <= 0.0031308 ? low.g : high.g,
-        color.b <= 0.0031308 ? low.b : high.b);
+        color.r <= kSrgbLinearThreshold ? low.r : high.r,
+        color.g <= kSrgbLinearThreshold ? low.g : high.g,
+        color.b <= kSrgbLinearThreshold ? low.b : high.b);
 }
 
 float4 PSMain(VSOut input) : SV_TARGET {
@@ -156,7 +212,7 @@ bool IsStartupEnabled() {
         return false;
     }
 
-    wchar_t value[2048] = {};
+    wchar_t value[kRegistryValueBufferCharacters] = {};
     DWORD valueSize = sizeof(value);
     DWORD type = 0;
     const LONG result = RegQueryValueExW(key, kRunValueName, nullptr, &type, reinterpret_cast<BYTE*>(value), &valueSize);
@@ -283,7 +339,8 @@ float SdrWhiteScaleForMonitor(HMONITOR monitor) {
 
         result = DisplayConfigGetDeviceInfo(&whiteLevel.header);
         if (result == ERROR_SUCCESS && whiteLevel.SDRWhiteLevel > 0) {
-            return std::max(1.0f, static_cast<float>(whiteLevel.SDRWhiteLevel) / 1000.0f);
+            // Windows reports SDR white as a 1000-based multiplier; 1000 maps to 1.0 scRGB.
+            return std::max(1.0f, static_cast<float>(whiteLevel.SDRWhiteLevel) / kDisplayConfigSdrWhiteLevelBase);
         }
 
         Log(L"DisplayConfigGetDeviceInfo(GET_SDR_WHITE_LEVEL) failed: " + LastErrorMessage(result));
@@ -294,9 +351,11 @@ float SdrWhiteScaleForMonitor(HMONITOR monitor) {
 }
 
 float HalfToFloat(uint16_t value) {
-    const uint32_t sign = (value & 0x8000u) << 16;
-    uint32_t exponent = (value >> 10) & 0x1fu;
-    uint32_t mantissa = value & 0x03ffu;
+    // The captured texture is RGBA half-float. Convert manually so the CPU preview
+    // uses the same frame data as the HDR file.
+    const uint32_t sign = (value & kHalfSignMask) << kHalfSignToFloatShift;
+    int32_t exponent = static_cast<int32_t>((value >> kHalfExponentShift) & kHalfExponentMask);
+    uint32_t mantissa = value & kHalfMantissaMask;
     uint32_t bits = 0;
 
     if (exponent == 0) {
@@ -304,19 +363,19 @@ float HalfToFloat(uint16_t value) {
             bits = sign;
         } else {
             exponent = 1;
-            while ((mantissa & 0x0400u) == 0) {
+            while ((mantissa & kHalfHiddenMantissaBit) == 0) {
                 mantissa <<= 1;
                 --exponent;
             }
-            mantissa &= 0x03ffu;
-            exponent = exponent + (127 - 15);
-            bits = sign | (exponent << 23) | (mantissa << 13);
+            mantissa &= kHalfMantissaMask;
+            exponent = exponent + (kFloatExponentBias - kHalfExponentBias);
+            bits = sign | (static_cast<uint32_t>(exponent) << kFloatExponentShift) | (mantissa << kHalfMantissaToFloatShift);
         }
-    } else if (exponent == 31) {
-        bits = sign | 0x7f800000u | (mantissa << 13);
+    } else if (exponent == kHalfExponentMax) {
+        bits = sign | kFloatInfinityBits | (mantissa << kHalfMantissaToFloatShift);
     } else {
-        exponent = exponent + (127 - 15);
-        bits = sign | (exponent << 23) | (mantissa << 13);
+        exponent = exponent + (kFloatExponentBias - kHalfExponentBias);
+        bits = sign | (static_cast<uint32_t>(exponent) << kFloatExponentShift) | (mantissa << kHalfMantissaToFloatShift);
     }
 
     float result = 0.0f;
@@ -326,10 +385,10 @@ float HalfToFloat(uint16_t value) {
 
 uint8_t ToSrgb8(float linear) {
     linear = std::clamp(linear, 0.0f, 1.0f);
-    const float gammaEncoded = linear <= 0.0031308f
-        ? linear * 12.92f
-        : 1.055f * std::pow(linear, 1.0f / 2.4f) - 0.055f;
-    return static_cast<uint8_t>(std::lround(gammaEncoded * 255.0f));
+    const float gammaEncoded = linear <= kSrgbLinearThreshold
+        ? linear * kSrgbLinearScale
+        : kSrgbGammaScale * std::pow(linear, 1.0f / kSrgbGamma) - kSrgbGammaOffset;
+    return static_cast<uint8_t>(std::lround(gammaEncoded * kUint8Max));
 }
 
 bool SaveWicBitmapFromMemory(
@@ -941,7 +1000,7 @@ private:
             framePool_ = Direct3D11CaptureFramePool::CreateFreeThreaded(
                 direct3DDevice_,
                 kFramePoolFormat,
-                2,
+                kFramePoolBufferCount,
                 captureSize_);
             frameArrivedToken_ = framePool_.FrameArrived({this, &App::OnFrameArrived});
             captureSession_ = framePool_.CreateCaptureSession(captureItem_);
@@ -1096,10 +1155,10 @@ private:
     void CreateMirrorWindow() {
         RECT workArea = {};
         SystemParametersInfoW(SPI_GETWORKAREA, 0, &workArea, 0);
-        const int width = 1280;
-        const int height = 720;
-        const int x = workArea.left + 80;
-        const int y = workArea.top + 80;
+        const int width = kMirrorInitialWidth;
+        const int height = kMirrorInitialHeight;
+        const int x = workArea.left + kMirrorInitialOffset;
+        const int y = workArea.top + kMirrorInitialOffset;
 
         mirrorHwnd_ = CreateWindowExW(
             0,
@@ -1147,7 +1206,7 @@ private:
         desc.Format = DXGI_FORMAT_B8G8R8A8_UNORM;
         desc.SampleDesc.Count = 1;
         desc.BufferUsage = DXGI_USAGE_RENDER_TARGET_OUTPUT;
-        desc.BufferCount = 2;
+        desc.BufferCount = kSwapChainBufferCount;
         desc.Scaling = DXGI_SCALING_STRETCH;
         desc.SwapEffect = DXGI_SWAP_EFFECT_FLIP_DISCARD;
         desc.AlphaMode = DXGI_ALPHA_MODE_IGNORE;
@@ -1221,9 +1280,8 @@ private:
         {
             std::scoped_lock lock(frameMutex_);
             if (!latestTexture_) {
-                const float clearColor[] = {0.02f, 0.02f, 0.02f, 1.0f};
-                d3dContext_->ClearRenderTargetView(renderTargetView_.get(), clearColor);
-                swapChain_->Present(1, 0);
+                d3dContext_->ClearRenderTargetView(renderTargetView_.get(), kMirrorWaitingClearColor);
+                swapChain_->Present(kPresentSyncInterval, kPresentFlags);
                 return;
             }
 
@@ -1245,8 +1303,7 @@ private:
         viewport.MinDepth = 0.0f;
         viewport.MaxDepth = 1.0f;
 
-        const float clearColor[] = {0.0f, 0.0f, 0.0f, 1.0f};
-        d3dContext_->ClearRenderTargetView(renderTargetView_.get(), clearColor);
+        d3dContext_->ClearRenderTargetView(renderTargetView_.get(), kMirrorFrameClearColor);
         ID3D11RenderTargetView* renderTarget = renderTargetView_.get();
         d3dContext_->OMSetRenderTargets(1, &renderTarget, nullptr);
         d3dContext_->RSSetViewports(1, &viewport);
@@ -1264,11 +1321,12 @@ private:
         d3dContext_->PSSetShaderResources(0, 1, &srv);
         d3dContext_->PSSetSamplers(0, 1, &sampler);
         d3dContext_->PSSetConstantBuffers(0, 1, &constantBuffer);
-        d3dContext_->Draw(3, 0);
+        // A fullscreen triangle covers the target without a vertex buffer or edge seam.
+        d3dContext_->Draw(kFullscreenTriangleVertexCount, 0);
 
         ID3D11ShaderResourceView* nullSrv = nullptr;
         d3dContext_->PSSetShaderResources(0, 1, &nullSrv);
-        swapChain_->Present(1, 0);
+        swapChain_->Present(kPresentSyncInterval, kPresentFlags);
     }
 
     bool CopyLatestFrameToCpu(std::vector<uint8_t>& halfRgba, UINT& width, UINT& height, std::wstring& error) {
@@ -1307,7 +1365,7 @@ private:
             return false;
         }
 
-        const UINT destinationStride = width * 8;
+        const UINT destinationStride = width * kHalfRgbaBytesPerPixel;
         halfRgba.resize(static_cast<size_t>(destinationStride) * height);
         auto* source = static_cast<const uint8_t*>(mapped.pData);
 
@@ -1323,19 +1381,21 @@ private:
     }
 
     std::vector<uint8_t> ToneMapHalfRgbaToBgra8(const std::vector<uint8_t>& halfRgba, UINT width, UINT height) const {
-        std::vector<uint8_t> bgra(static_cast<size_t>(width) * height * 4);
+        std::vector<uint8_t> bgra(static_cast<size_t>(width) * height * kBgraBytesPerPixel);
         const auto* source = reinterpret_cast<const uint16_t*>(halfRgba.data());
         const float whiteScale = std::max(1.0f, sdrWhiteScale_);
 
         for (size_t i = 0, pixelCount = static_cast<size_t>(width) * height; i < pixelCount; ++i) {
-            const float r = std::clamp(HalfToFloat(source[i * 4 + 0]) / whiteScale, 0.0f, 1.0f);
-            const float g = std::clamp(HalfToFloat(source[i * 4 + 1]) / whiteScale, 0.0f, 1.0f);
-            const float b = std::clamp(HalfToFloat(source[i * 4 + 2]) / whiteScale, 0.0f, 1.0f);
+            const size_t rgbaOffset = i * kHalfRgbaChannelCount;
+            const size_t bgraOffset = i * kBgraBytesPerPixel;
+            const float r = std::clamp(HalfToFloat(source[rgbaOffset + kRgbaRedIndex]) / whiteScale, 0.0f, 1.0f);
+            const float g = std::clamp(HalfToFloat(source[rgbaOffset + kRgbaGreenIndex]) / whiteScale, 0.0f, 1.0f);
+            const float b = std::clamp(HalfToFloat(source[rgbaOffset + kRgbaBlueIndex]) / whiteScale, 0.0f, 1.0f);
 
-            bgra[i * 4 + 0] = ToSrgb8(b);
-            bgra[i * 4 + 1] = ToSrgb8(g);
-            bgra[i * 4 + 2] = ToSrgb8(r);
-            bgra[i * 4 + 3] = 255;
+            bgra[bgraOffset + kBgraBlueIndex] = ToSrgb8(b);
+            bgra[bgraOffset + kBgraGreenIndex] = ToSrgb8(g);
+            bgra[bgraOffset + kBgraRedIndex] = ToSrgb8(r);
+            bgra[bgraOffset + kBgraAlphaIndex] = kOpaqueAlpha;
         }
 
         return bgra;
@@ -1350,7 +1410,7 @@ private:
             return;
         }
 
-        if (!WaitForFirstFrame(wasCapturing ? 500 : 2000)) {
+        if (!WaitForFirstFrame(wasCapturing ? kExistingCaptureFrameWaitMs : kNewCaptureFrameWaitMs)) {
             Log(L"Timed out waiting for first capture frame.");
             ShowNotification(kAppName, L"Screenshot failed waiting for capture frame.");
             if (!mirrorVisible_) {
@@ -1373,7 +1433,7 @@ private:
         }
 
         const auto hdrPath = MakeScreenshotPath(L".jxr");
-        const UINT halfStride = width * 8;
+        const UINT halfStride = width * kHalfRgbaBytesPerPixel;
         if (!SaveWicBitmapFromMemory(
                 hdrPath,
                 GUID_ContainerFormatWmp,
@@ -1401,7 +1461,7 @@ private:
                 GUID_WICPixelFormat32bppBGRA,
                 width,
                 height,
-                width * 4,
+                width * kBgraBytesPerPixel,
                 sdrPreview,
                 error);
         if (!previewSaved) {
